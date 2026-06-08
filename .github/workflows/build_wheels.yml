@@ -215,15 +215,15 @@ jobs:
           cd target/wheels
           OLD=$(ls *.whl)
           NEW=$(echo "$OLD" | sed -E "s/(-[^-]+)\.whl$/-${PLAT_TAG}.whl/")
-          mv "$OLD" "$NEW"
+          cp "$OLD" "$NEW"
           
-          echo "WHEEL_PATH=$(pwd)/$NEW" >> $GITHUB_OUTPUT
+          echo "WHEEL_DIR=$(pwd)" >> $GITHUB_OUTPUT
 
       - name: Upload Temporary Artifact
         uses: actions/upload-artifact@v4
         with:
           name: wheel-${{ matrix.python-version }}-${{ matrix.arch }}
-          path: ${{ steps.build_step.outputs.WHEEL_PATH }}
+          path: ${{ steps.build_step.outputs.WHEEL_DIR }}/*.whl
           retention-days: 1
 
   release:

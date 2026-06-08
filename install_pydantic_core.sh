@@ -75,6 +75,20 @@ try:
     py_tag = '${PY_TAG}'
     plat_tag = '${PLAT_TAG}'
     
+    # Try to find a modern android tag first (e.g., android_arm64_v8a)
+    for asset in data['assets']:
+        name = asset['name']
+        if py_tag in name and 'android' in name and name.endswith('.whl'):
+            # Match architecture roughly
+            if ('aarch64' in plat_tag and 'arm64' in name) or \\
+               ('armv7' in plat_tag and 'armv7' in name) or \\
+               ('x86_64' in plat_tag and 'x86_64' in name) or \\
+               ('i686' in plat_tag and 'x86' in name and '64' not in name):
+                print(asset['browser_download_url'])
+                print(asset['name'])
+                sys.exit(0)
+                
+    # Fallback to the explicit plat_tag
     for asset in data['assets']:
         name = asset['name']
         if py_tag in name and plat_tag in name and name.endswith('.whl'):
@@ -114,6 +128,20 @@ if curl -fL -o "$FILENAME" "$DOWNLOAD_URL" --progress-bar; then
       echo ""
       echo -e "${GREEN}✅ Success! Installed: ${FILENAME}${NC}"
   else
+      echo -e "${YELLOW}Pip install failed. Trying alternative platform tags...${NC}"
+      # Rename to android tags and retry
+      if [[ "$FILENAME" == *"linux_"* ]]; then
+          NEW_FILENAME=$(echo "$FILENAME" | sed -e 's/linux_aarch64/android_arm64_v8a/' -e 's/linux_armv7l/android_armv7/' -e 's/linux_x86_64/android_x86_64/' -e 's/linux_i686/android_x86/')
+          mv "$FILENAME" "$NEW_FILENAME"
+          if pip install "./$NEW_FILENAME"; then
+              rm -f "$NEW_FILENAME"
+              echo ""
+              echo -e "${GREEN}✅ Success! Installed: ${NEW_FILENAME}${NC}"
+              exit 0
+          fi
+          # If it still fails, move back for error reporting
+          mv "$NEW_FILENAME" "$FILENAME"
+      fi
       echo -e "${RED}❌ Pip install failed.${NC}"
       exit 1
   fi
