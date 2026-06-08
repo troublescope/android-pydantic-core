@@ -2,7 +2,7 @@
 
 [![Build & Release](https://img.shields.io/github/actions/workflow/status/troublescope/android-pydantic-core/build_wheels.yml?label=Build)](https://github.com/troublescope/android-pydantic-core/actions/build_wheels.yml)
 [![Python Versions](https://img.shields.io/badge/python-3.9%20%7C%203.10%20%7C%203.11%20%7C%203.12%20%7C%203.13-blue)](https://github.com/troublescope/android-pydantic-core/releases)
-[![Architectures](https://img.shields.io/badge/arch-arm64%20%7C%20armv7%20%7C%20x86%20%7C%20x86__64-orange)](https://github.com/troublescope/android-pydantic-core/releases)
+[![Architectures](https://img.shields.io/badge/arch-arm64%20%7C%20armv7-orange)](https://github.com/troublescope/android-pydantic-core/releases)
 
 **Automated builds of `pydantic-core` optimized for Android (Termux).**
 
@@ -14,8 +14,6 @@ Compiling `pydantic-core` on Android requires a Rust toolchain and takes ~15 min
 |--------------|-------------|--------|
 | `aarch64` | Modern Smartphones | ✅ Supported |
 | `armv7` | Older Devices | ✅ Supported |
-| `x86_64` | Emulators / Chromebooks | ✅ Supported |
-| `x86` | Old Emulators | ✅ Supported |
 
 > **Python Versions:** 3.9, 3.10, 3.11, 3.12, 3.13
 

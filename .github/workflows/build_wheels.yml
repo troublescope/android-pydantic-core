@@ -65,11 +65,11 @@ jobs:
     if: needs.check-version.outputs.should_build == 'true'
     runs-on: ubuntu-latest
     strategy:
-      fail-fast: false
       matrix:
+        fail-fast: false
         python-version: ['3.9', '3.10', '3.11', '3.12', '3.13']
-        arch: ['arm64-v8a', 'armeabi-v7a', 'x86', 'x86_64']
-    steps:
+        arch: ['arm64-v8a', 'armeabi-v7a']
+      steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
@@ -78,7 +78,7 @@ jobs:
           pip install maturin
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
           source "$HOME/.cargo/env"
-          rustup target add aarch64-linux-android armv7-linux-androideabi i686-linux-android x86_64-linux-android
+          rustup target add aarch64-linux-android armv7-linux-androideabi
 
       - name: Cache Cargo Registry
         uses: actions/cache@v4
