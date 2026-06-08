@@ -180,12 +180,12 @@ jobs:
           EOF
 
           # --- Download Source Code (CLEAN ENVIRONMENT) ---
-          # Use curl to get the sdist directly from PyPI (more robust than pip download in CI)
+          # Use curl with retries to get the sdist directly from PyPI
           mkdir -p build_src && cd build_src
           echo "Fetching source URL for ${{ env.PACKAGE_NAME }}==$PKG_VER..."
-          SOURCE_URL=$(curl -s https://pypi.org/pypi/${{ env.PACKAGE_NAME }}/$PKG_VER/json | python3 -c "import sys, json; data=json.load(sys.stdin); print([u['url'] for u in data['urls'] if u['packagetype'] == 'sdist'][0])")
+          SOURCE_URL=$(curl -s --connect-timeout 30 --retry 5 https://pypi.org/pypi/${{ env.PACKAGE_NAME }}/$PKG_VER/json | python3 -c "import sys, json; data=json.load(sys.stdin); print([u['url'] for u in data['urls'] if u['packagetype'] == 'sdist'][0])")
           echo "Downloading from: $SOURCE_URL"
-          curl -L "$SOURCE_URL" -o source.tar.gz
+          curl -L --connect-timeout 30 --retry 5 "$SOURCE_URL" -o source.tar.gz
           tar -xzf source.tar.gz
           cd pydantic?core-*/
 
