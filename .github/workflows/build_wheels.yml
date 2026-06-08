@@ -180,11 +180,13 @@ jobs:
           EOF
 
           # --- Download Source Code (CLEAN ENVIRONMENT) ---
-          # Run pip BEFORE exporting cross-compilation env vars
+          # Use curl to get the sdist directly from PyPI (more robust than pip download in CI)
           mkdir -p build_src && cd build_src
-          echo "Downloading source for $PKG_VER..."
-          python3 -m pip download "${{ env.PACKAGE_NAME }}==$PKG_VER" --no-binary :all: --no-deps
-          tar -xzf pydantic?core-*.tar.gz
+          echo "Fetching source URL for ${{ env.PACKAGE_NAME }}==$PKG_VER..."
+          SOURCE_URL=$(curl -s https://pypi.org/pypi/${{ env.PACKAGE_NAME }}/$PKG_VER/json | python3 -c "import sys, json; data=json.load(sys.stdin); print([u['url'] for u in data['urls'] if u['packagetype'] == 'sdist'][0])")
+          echo "Downloading from: $SOURCE_URL"
+          curl -L "$SOURCE_URL" -o source.tar.gz
+          tar -xzf source.tar.gz
           cd pydantic?core-*/
 
           # --- APPLY CROSS-COMPILATION ENV VARS NOW ---
