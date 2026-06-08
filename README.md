@@ -1,8 +1,8 @@
 # 📱 Android Pydantic Core
 
-[![Build & Release](https://img.shields.io/github/actions/workflow/status/Eutalix/android-pydantic-core/build_wheels.yml?label=Build)](https://github.com/Eutalix/android-pydantic-core/actions/build_wheels.yml)
-[![Python Versions](https://img.shields.io/badge/python-3.9%20%7C%203.10%20%7C%203.11%20%7C%203.12%20%7C%203.13-blue)](https://github.com/Eutalix/android-pydantic-core/releases)
-[![Architectures](https://img.shields.io/badge/arch-arm64%20%7C%20armv7%20%7C%20x86%20%7C%20x86__64-orange)](https://github.com/Eutalix/android-pydantic-core/releases)
+[![Build & Release](https://img.shields.io/github/actions/workflow/status/troublescope/android-pydantic-core/build_wheels.yml?label=Build)](https://github.com/troublescope/android-pydantic-core/actions/build_wheels.yml)
+[![Python Versions](https://img.shields.io/badge/python-3.9%20%7C%203.10%20%7C%203.11%20%7C%203.12%20%7C%203.13-blue)](https://github.com/troublescope/android-pydantic-core/releases)
+[![Architectures](https://img.shields.io/badge/arch-arm64%20%7C%20armv7%20%7C%20x86%20%7C%20x86__64-orange)](https://github.com/troublescope/android-pydantic-core/releases)
 
 **Automated builds of `pydantic-core` optimized for Android (Termux).**
 
@@ -27,18 +27,18 @@ Compiling `pydantic-core` on Android requires a Rust toolchain and takes ~15 min
 Use this if you want the installer to **auto-detect** your architecture and Python version.
 
 ```bash
-curl -sL https://raw.githubusercontent.com/Eutalix/android-pydantic-core/main/install_pydantic_core.sh | bash
+curl -sL https://raw.githubusercontent.com/troublescope/android-pydantic-core/main/install_pydantic_core.sh | bash
 ```
 
 ### 🐍 Option 2: Pip (Standard)
 Best for requirements files or CI/CD.
 
 ```bash
-pip install pydantic-core --extra-index-url https://eutalix.github.io/android-pydantic-core/
+pip install pydantic-core --extra-index-url https://troublescope.github.io/android-pydantic-core/
 ```
 
 ### 📦 Option 3: Manual Download
-You can manually download the `.whl` files from the [Releases Page](https://github.com/Eutalix/android-pydantic-core/releases).
+You can manually download the `.whl` files from the [Releases Page](https://github.com/troublescope/android-pydantic-core/releases).
 
 1. Download the file matching your Python version (`cp312`) and Architecture (`aarch64`).
 2. Install it:

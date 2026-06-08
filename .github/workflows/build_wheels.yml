@@ -183,7 +183,7 @@ jobs:
           # Run pip BEFORE exporting cross-compilation env vars
           mkdir -p build_src && cd build_src
           echo "Downloading source for $PKG_VER..."
-          pip download "${{ env.PACKAGE_NAME }}==$PKG_VER" --no-binary :all: --no-deps
+          python3 -m pip download "${{ env.PACKAGE_NAME }}==$PKG_VER" --no-binary :all: --no-deps
           tar -xzf pydantic?core-*.tar.gz
           cd pydantic?core-*/
 
