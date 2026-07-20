@@ -1,6 +1,13 @@
 name: Android Wheels & Release
 
 on:
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/build_wheels.yml'
+      - 'install_pydantic_core.sh'
+      - 'README.md'
   workflow_dispatch:
     inputs:
       force_build:
