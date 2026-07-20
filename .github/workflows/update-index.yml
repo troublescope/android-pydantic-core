@@ -15,6 +15,9 @@ jobs:
     name: Generate PEP 503 Index
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
@@ -28,31 +31,27 @@ jobs:
         run: |
           set -ex
           mkdir -p site
-          
-          cat <<'PYEOF' > generate_index.py
-          import os
-          import json
-          import subprocess
-          import sys
+
+          python3 - << 'PYEOF'
+          import os, json, subprocess, sys
 
           repo = os.environ['REPO']
           pkg_name = os.environ['PKG_NAME']
           normalized_name = pkg_name.replace('_', '-').lower()
 
-          print(f"🔍 Fetching releases from API for {repo}...")
+          print(f"Fetching releases from API for {repo}...")
 
           cmd = ["gh", "api", f"repos/{repo}/releases", "--paginate"]
-
           result = subprocess.run(cmd, capture_output=True, text=True)
 
           if result.returncode != 0:
-              print(f"❌ API Error: {result.stderr}")
+              print(f"API Error: {result.stderr}")
               sys.exit(1)
 
           try:
               releases = json.loads(result.stdout)
           except json.JSONDecodeError:
-              print("❌ Error decoding JSON response")
+              print("Error decoding JSON response")
               sys.exit(1)
 
           target_dir = f"site/{normalized_name}"
@@ -64,43 +63,42 @@ jobs:
           for release in releases:
               if release.get('draft'):
                   continue
-
               for asset in release.get('assets', []):
                   name = asset['name']
                   download_url = asset.get('browser_download_url')
-
                   if name.endswith('.whl') and download_url:
                       html_links.append(f'<a href="{download_url}">{name}</a>')
                       wheel_count += 1
 
-          # Generate Index HTML (PEP 503 compliant)
-          html_content = f"""<!DOCTYPE html>
-<html>
-<body>
-    <h1>Links for {normalized_name}</h1>
-    {'<br>'.join(html_links)}
-</body>
-</html>
-"""
+          # Build PEP 503 index HTML
+          links_html = '<br>\n'.join(html_links)
+          index_html = (
+              "<!DOCTYPE html>\n"
+              "<html>\n"
+              "<body>\n"
+              f"    <h1>Links for {normalized_name}</h1>\n"
+              f"    {links_html}\n"
+              "</body>\n"
+              "</html>\n"
+          )
 
           with open(f"{target_dir}/index.html", "w") as f:
-              f.write(html_content)
+              f.write(index_html)
 
-          # Root Redirect
-          root_content = f"""<!DOCTYPE html>
-<html>
-<head><meta http-equiv="refresh" content="0; url={normalized_name}/" /></head>
-<body><a href="{normalized_name}/">Go to {normalized_name}</a></body>
-</html>
-"""
+          # Root redirect page
+          root_html = (
+              "<!DOCTYPE html>\n"
+              "<html>\n"
+              f'<head><meta http-equiv="refresh" content="0; url={normalized_name}/" /></head>\n'
+              f'<body><a href="{normalized_name}/">Go to {normalized_name}</a></body>\n'
+              "</html>\n"
+          )
 
           with open("site/index.html", "w") as f:
-              f.write(root_content)
+              f.write(root_html)
 
-          print(f"✅ Generated index for {normalized_name} with {wheel_count} wheels.")
+          print(f"Generated index for {normalized_name} with {wheel_count} wheels.")
           PYEOF
-
-          python3 generate_index.py
 
       - name: Upload Pages Artifact
         uses: actions/upload-pages-artifact@v3
