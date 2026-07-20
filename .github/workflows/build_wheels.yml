@@ -265,7 +265,7 @@ jobs:
           echo "Downloading from: $SOURCE_URL"
           curl -L --connect-timeout 30 --retry 5 --retry-delay 10 "$SOURCE_URL" -o source.tar.gz
           tar -xzf source.tar.gz
-          cd pydantic*-core-*/
+          cd pydantic_core-*/
 
           # --- Apply Cross-Compilation Env Vars ---
           export PYO3_CROSS_LIB_DIR="$MOCK_DIR"
