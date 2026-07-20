@@ -124,9 +124,12 @@ except Exception as e:
     sys.exit(1)
 "
 
+set +e
 RESULT=$(echo "$JSON_RESPONSE" | python3 -c "$READ_PYTHON_SCRIPT" 2>&1)
+EXIT_CODE=$?
+set -e
 
-if [ $? -ne 0 ] || [ -z "$RESULT" ]; then
+if [ $EXIT_CODE -ne 0 ] || [ -z "$(echo "$RESULT" | head -n1)" ]; then
     echo -e "${RED}❌ Error: No compatible wheel found in the latest release.${NC}"
     echo "   Make sure a release exists for Python $PY_VER_DOT on $ARCH."
     echo ""
@@ -140,6 +143,13 @@ try:
 except:
     print('   (Could not parse release info)')
 " 2>/dev/null || true
+    echo ""
+    echo "   Supported Python versions: 3.9 - 3.14"
+    echo "   Your Python: $PY_VER_DOT ($PY_TAG)"
+    echo ""
+    echo "   If your Python version is not listed, the build may still be in progress."
+    echo "   Try again later, or install a supported Python version:"
+    echo "     pkg install python3.13"
     exit 1
 fi
 
