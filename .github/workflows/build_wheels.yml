@@ -16,6 +16,7 @@ on:
         required: false
         default: false
         type: boolean
+
       specific_version:
         description: "Build a specific pydantic-core version (leave empty for latest)"
         required: false
@@ -27,8 +28,10 @@ on:
 
 env:
   PACKAGE_NAME: pydantic-core
+
   NDK_VERSION: "25.2.9519653"
   ANDROID_API: "24"
+
   CMDLINE_TOOLS_VERSION: "11076708"
   CMDLINE_TOOLS_URL: "https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip"
 
@@ -36,64 +39,73 @@ permissions:
   contents: write
 
 jobs:
+
   check-version:
     name: Check PyPI Version
     runs-on: ubuntu-latest
 
     outputs:
       version: ${{ steps.pypi.outputs.version }}
-      should_build: ${{ steps.check_release.outputs.should_build }}
+      should_build: ${{ steps.release.outputs.should_build }}
       commit_hash: ${{ steps.commit.outputs.commit_hash }}
 
     steps:
-      - name: Checkout Repository
+
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Get Latest PyPI Version
+      - name: Get PyPI Version
         id: pypi
+        shell: bash
         env:
           SPECIFIC_VER: ${{ inputs.specific_version }}
-        shell: bash
         run: |
           set -euo pipefail
 
           if [[ -n "${SPECIFIC_VER:-}" ]]; then
-            VER="$SPECIFIC_VER"
-            echo "Using specified version: $VER"
+            VERSION="$SPECIFIC_VER"
+            echo "Using requested version: $VERSION"
           else
-            echo "Fetching latest version from PyPI..."
+            echo "Fetching latest pydantic-core from PyPI..."
 
-            VER="$(
+            VERSION="$(
               curl -fsSL \
                 --retry 5 \
-                --retry-delay 10 \
+                --retry-delay 5 \
                 --connect-timeout 30 \
                 "https://pypi.org/pypi/${PACKAGE_NAME}/json" |
-              python3 -c 'import sys,json; print(json.load(sys.stdin)["info"]["version"])'
+              python3 -c '
+          import sys
+          import json
+
+          data = json.load(sys.stdin)
+          print(data["info"]["version"])
+          '
             )"
           fi
 
-          if [[ -z "$VER" ]]; then
+          if [[ -z "$VERSION" ]]; then
             echo "Failed to determine package version"
             exit 1
           fi
 
-          echo "Version: $VER"
-          echo "version=$VER" >> "$GITHUB_OUTPUT"
+          echo "Version: $VERSION"
 
-      - name: Check if Release Already Exists
-        id: check_release
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Check GitHub Release
+        id: release
+        shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          FORCE: ${{ inputs.force_build }}
-        shell: bash
+          FORCE_BUILD: ${{ inputs.force_build }}
         run: |
           set -euo pipefail
 
-          VER="${{ steps.pypi.outputs.version }}"
-          TAG="v${VER}"
+          VERSION="${{ steps.pypi.outputs.version }}"
+          TAG="v${VERSION}"
 
-          if [[ "${FORCE:-false}" == "true" ]]; then
+          if [[ "${FORCE_BUILD:-false}" == "true" ]]; then
             echo "Force build enabled"
             echo "should_build=true" >> "$GITHUB_OUTPUT"
             exit 0
@@ -107,15 +119,18 @@ jobs:
             echo "should_build=true" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Record Commit Hash
+      - name: Record Commit
         id: commit
         shell: bash
         run: |
           echo "commit_hash=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
 
+
   build:
     name: Build ${{ matrix.arch }} / Python ${{ matrix.python-version }}
-    needs: check-version
+
+    needs:
+      - check-version
 
     if: needs.check-version.outputs.should_build == 'true'
 
@@ -123,6 +138,7 @@ jobs:
 
     strategy:
       fail-fast: false
+
       matrix:
         python-version:
           - "3.9"
@@ -137,6 +153,7 @@ jobs:
           - armeabi-v7a
 
         include:
+
           - arch: arm64-v8a
             rust_target: aarch64-linux-android
             ndk_lib_arch: aarch64-linux-android
@@ -148,13 +165,16 @@ jobs:
             plat_tag: linux_armv7l
 
     steps:
-      - name: Checkout Repository
+
+      - name: Checkout
         uses: actions/checkout@v4
+
 
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
+
 
       - name: Install Build Dependencies
         shell: bash
@@ -164,12 +184,14 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install maturin
 
+
       - name: Setup Rust
         shell: bash
         run: |
           set -euo pipefail
 
-          curl --proto "=https" \
+          curl \
+            --proto "=https" \
             --tlsv1.2 \
             -sSf \
             https://sh.rustup.rs |
@@ -181,7 +203,10 @@ jobs:
 
           echo "Rust:"
           rustc --version
+
+          echo "Cargo:"
           cargo --version
+
 
       - name: Cache Cargo
         uses: actions/cache@v4
@@ -189,19 +214,31 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            target
-          key: cargo-${{ runner.os }}-${{ matrix.arch }}-${{ matrix.python-version }}-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            cargo-${{ runner.os }}-${{ matrix.arch }}-${{ matrix.python-version }}-
-            cargo-${{ runner.os }}-${{ matrix.arch }}-
 
-      - name: Cache Android SDK
+          key: cargo-${{ runner.os }}-${{ matrix.arch }}-${{ hashFiles('**/Cargo.lock') }}
+
+          restore-keys: |
+            cargo-${{ runner.os }}-${{ matrix.arch }}-
+            cargo-${{ runner.os }}-
+
+
+      - name: Cache Android Command Line Tools
         uses: actions/cache@v4
         with:
           path: |
             ~/android-sdk/cmdline-tools/latest
+
+          key: android-cmdline-${{ runner.os }}-${{ env.CMDLINE_TOOLS_VERSION }}
+
+
+      - name: Cache Android NDK
+        uses: actions/cache@v4
+        with:
+          path: |
             ~/android-sdk/ndk/${{ env.NDK_VERSION }}
-          key: android-${{ runner.os }}-cmdline-${{ env.CMDLINE_TOOLS_VERSION }}-ndk-${{ env.NDK_VERSION }}
+
+          key: android-ndk-${{ runner.os }}-${{ env.NDK_VERSION }}
+
 
       - name: Setup Android SDK
         shell: bash
@@ -209,33 +246,67 @@ jobs:
           set -euo pipefail
 
           ANDROID_HOME="$HOME/android-sdk"
+          CMDLINE_DIR="$ANDROID_HOME/cmdline-tools/latest"
+          SDKMANAGER="$CMDLINE_DIR/bin/sdkmanager"
 
           mkdir -p "$ANDROID_HOME/cmdline-tools"
 
-          if [[ ! -x "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" ]]; then
-            rm -rf "$ANDROID_HOME/cmdline-tools/latest"
-            mkdir -p "$ANDROID_HOME/cmdline-tools/latest"
+          echo "Checking sdkmanager..."
 
-            curl -fsSL \
-              "${{ env.CMDLINE_TOOLS_URL }}" \
+          if [[ ! -x "$SDKMANAGER" ]]; then
+
+            echo "sdkmanager not found"
+            echo "Installing Android command-line tools..."
+
+            rm -rf "$CMDLINE_DIR"
+            rm -rf /tmp/android-cmdline-tools
+            rm -f /tmp/cmdline-tools.zip
+
+            mkdir -p /tmp/android-cmdline-tools
+
+            curl -fL \
+              --retry 5 \
+              --retry-delay 5 \
+              --connect-timeout 30 \
+              "${CMDLINE_TOOLS_URL}" \
               -o /tmp/cmdline-tools.zip
 
-            unzip -q /tmp/cmdline-tools.zip \
+            unzip -q \
+              /tmp/cmdline-tools.zip \
               -d /tmp/android-cmdline-tools
 
-            rm -rf "$ANDROID_HOME/cmdline-tools/latest"
+            if [[ ! -d "/tmp/android-cmdline-tools/cmdline-tools" ]]; then
+              echo "Invalid Android command-line tools archive"
+              find /tmp/android-cmdline-tools -maxdepth 3 -type f -print
+              exit 1
+            fi
+
             mv \
               /tmp/android-cmdline-tools/cmdline-tools \
-              "$ANDROID_HOME/cmdline-tools/latest"
+              "$CMDLINE_DIR"
           fi
+
+          if [[ ! -x "$SDKMANAGER" ]]; then
+            echo "sdkmanager installation failed"
+
+            echo "Android SDK contents:"
+            find "$ANDROID_HOME" -maxdepth 5 -type f -print || true
+
+            exit 1
+          fi
+
+          echo "sdkmanager found:"
+          echo "$SDKMANAGER"
+
+          echo "sdkmanager version:"
+          "$SDKMANAGER" --version
 
           echo "ANDROID_HOME=$ANDROID_HOME" >> "$GITHUB_ENV"
           echo "ANDROID_SDK_ROOT=$ANDROID_HOME" >> "$GITHUB_ENV"
 
-          echo "$ANDROID_HOME/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
+          echo "$CMDLINE_DIR/bin" >> "$GITHUB_PATH"
           echo "$ANDROID_HOME/platform-tools" >> "$GITHUB_PATH"
 
-          sdkmanager --version
 
       - name: Install Android NDK
         shell: bash
@@ -243,16 +314,81 @@ jobs:
           set -euo pipefail
 
           ANDROID_HOME="$HOME/android-sdk"
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          NDK_DIR="$ANDROID_HOME/ndk/${NDK_VERSION}"
 
-          if [[ ! -d "$ANDROID_HOME/ndk/${{ env.NDK_VERSION }}" ]]; then
-            yes | sdkmanager --licenses >/dev/null 2>&1 || true
-            sdkmanager "ndk;${{ env.NDK_VERSION }}"
+          if [[ ! -x "$SDKMANAGER" ]]; then
+            echo "sdkmanager not found:"
+            echo "$SDKMANAGER"
+
+            find "$ANDROID_HOME" \
+              -maxdepth 6 \
+              -type f \
+              -name sdkmanager \
+              -print || true
+
+            exit 1
           fi
 
-          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/${{ env.NDK_VERSION }}" >> "$GITHUB_ENV"
+          echo "Accepting Android SDK licenses..."
+
+          yes | "$SDKMANAGER" --licenses >/dev/null 2>&1 || true
+
+          if [[ ! -d "$NDK_DIR" ]]; then
+            echo "Installing NDK ${NDK_VERSION}..."
+
+            "$SDKMANAGER" \
+              "platform-tools" \
+              "platforms;android-${ANDROID_API}" \
+              "ndk;${NDK_VERSION}"
+          else
+            echo "NDK ${NDK_VERSION} already exists"
+          fi
+
+          if [[ ! -d "$NDK_DIR" ]]; then
+            echo "NDK installation failed"
+            exit 1
+          fi
+
+          if [[ ! -d "$ANDROID_HOME/platforms/android-${ANDROID_API}" ]]; then
+            echo "Android API ${ANDROID_API} platform not found"
+            exit 1
+          fi
+
+          echo "ANDROID_HOME=$ANDROID_HOME" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$ANDROID_HOME" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_HOME=$NDK_DIR" >> "$GITHUB_ENV"
 
           echo "NDK:"
-          "$ANDROID_HOME/ndk/${{ env.NDK_VERSION }}/source.properties"
+          cat "$NDK_DIR/source.properties"
+
+          echo "ANDROID_NDK_HOME:"
+          echo "$NDK_DIR"
+
+
+      - name: Verify Android Toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          echo "ANDROID_NDK_HOME=$ANDROID_NDK_HOME"
+
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          NDK_BIN="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
+
+          echo
+          echo "sdkmanager:"
+          "$SDKMANAGER" --version
+
+          echo
+          echo "clang:"
+          "$NDK_BIN/clang" --version
+
+          echo
+          echo "Available Android targets:"
+          "$SDKMANAGER" --list_installed | head -100
+
 
       - name: Build Wheel
         id: build_step
@@ -266,10 +402,10 @@ jobs:
           PKG_VER="${{ needs.check-version.outputs.version }}"
           ARCH="${{ matrix.arch }}"
           RUST_TARGET="${{ matrix.rust_target }}"
-          PLAT_TAG="${{ matrix.plat_tag }}"
           NDK_LIB_ARCH="${{ matrix.ndk_lib_arch }}"
+          PLAT_TAG="${{ matrix.plat_tag }}"
 
-          export ANDROID_API_LEVEL="${{ env.ANDROID_API }}"
+          export ANDROID_API_LEVEL="${ANDROID_API}"
 
           NDK_BIN="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
           NDK_SYSROOT="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot"
@@ -277,42 +413,62 @@ jobs:
           export PATH="$NDK_BIN:$PATH"
 
           case "$ARCH" in
+
             arm64-v8a)
               CC_TARGET="aarch64-linux-android${ANDROID_API_LEVEL}"
               ;;
+
             armeabi-v7a)
               CC_TARGET="armv7a-linux-androideabi${ANDROID_API_LEVEL}"
               ;;
+
             *)
               echo "Unsupported architecture: $ARCH"
               exit 1
               ;;
+
           esac
 
           echo "========================================="
-          echo "Package:      $PKG_VER"
-          echo "Architecture: $ARCH"
-          echo "Python:       $PY_VER"
-          echo "Rust target:  $RUST_TARGET"
-          echo "CC target:    $CC_TARGET"
-          echo "Platform:     $PLAT_TAG"
+          echo "Package:       $PKG_VER"
+          echo "Architecture:  $ARCH"
+          echo "Python:        $PY_VER"
+          echo "Rust target:   $RUST_TARGET"
+          echo "CC target:     $CC_TARGET"
+          echo "Platform tag:  $PLAT_TAG"
           echo "========================================="
+
 
           CLANG="$NDK_BIN/${CC_TARGET}-clang"
 
           if [[ ! -x "$CLANG" ]]; then
             echo "Clang wrapper not found:"
             echo "$CLANG"
+
+            echo
+            echo "Available clang wrappers:"
+            find "$NDK_BIN" \
+              -maxdepth 1 \
+              -type f \
+              -name "*android*clang" \
+              -print | head -50
+
             exit 1
           fi
 
+          echo "Using linker:"
+          echo "$CLANG"
+
+
           LINKER_VAR="CARGO_TARGET_$(echo "$RUST_TARGET" | tr '[:lower:]-' '[:upper:]_')_LINKER"
+
           export "${LINKER_VAR}=$CLANG"
 
-          echo "Linker: $CLANG"
 
           MOCK_DIR="$(pwd)/mock_libs"
+
           mkdir -p "$MOCK_DIR"
+
 
           echo "Creating mock libpython..."
 
@@ -323,7 +479,8 @@ jobs:
             -o "$MOCK_DIR/libpython${PY_VER}.so" \
             -xc /dev/null
 
-          echo "Finding libdl..."
+
+          echo "Finding libdl.so..."
 
           LIBDL_PATH="$(
             find "$NDK_SYSROOT" \
@@ -334,12 +491,22 @@ jobs:
 
           if [[ -z "$LIBDL_PATH" ]]; then
             echo "libdl.so not found"
+
+            find "$NDK_SYSROOT" \
+              -name "libdl.so" \
+              -print | head -50
+
             exit 1
           fi
 
+          echo "libdl:"
+          echo "$LIBDL_PATH"
+
           cp "$LIBDL_PATH" "$MOCK_DIR/libdl.so"
 
+
           SYSCONFIG_NAME="_sysconfigdata__linux_${RUST_TARGET}"
+
 
           cat > "$MOCK_DIR/${SYSCONFIG_NAME}.py" <<'PYEOF'
           build_time_vars = {
@@ -363,20 +530,29 @@ jobs:
           }
           PYEOF
 
+
           sed -i \
             -e "s|PYVER_PLACEHOLDER|$PY_VER|g" \
             -e "s|MOCKDIR_PLACEHOLDER|$MOCK_DIR|g" \
             "$MOCK_DIR/${SYSCONFIG_NAME}.py"
 
+
+          echo "Sysconfig:"
+          cat "$MOCK_DIR/${SYSCONFIG_NAME}.py"
+
+
           mkdir -p build_src
+
           cd build_src
 
-          echo "Fetching pydantic-core $PKG_VER..."
+
+          echo "Fetching source for pydantic-core $PKG_VER..."
+
 
           SOURCE_URL="$(
             curl -fsSL \
               --retry 5 \
-              --retry-delay 10 \
+              --retry-delay 5 \
               --connect-timeout 30 \
               "https://pypi.org/pypi/${PACKAGE_NAME}/${PKG_VER}/json" |
             python3 -c '
@@ -392,29 +568,49 @@ jobs:
           ]
 
           if not urls:
-              raise SystemExit("No sdist found")
+              raise SystemExit("No source distribution found")
 
           print(urls[0])
           '
           )"
 
-          echo "Source: $SOURCE_URL"
+
+          if [[ -z "$SOURCE_URL" ]]; then
+            echo "Source URL not found"
+            exit 1
+          fi
+
+
+          echo "Downloading:"
+          echo "$SOURCE_URL"
+
 
           curl -fL \
             --retry 5 \
-            --retry-delay 10 \
+            --retry-delay 5 \
             --connect-timeout 30 \
             "$SOURCE_URL" \
             -o source.tar.gz
 
+
           tar -xzf source.tar.gz
 
-          cd pydantic_core-*/
+
+          SOURCE_DIR="$(find . -maxdepth 1 -type d -name 'pydantic_core-*' | head -n 1)"
+
+          if [[ -z "$SOURCE_DIR" ]]; then
+            echo "Extracted source directory not found"
+            exit 1
+          fi
+
+          cd "$SOURCE_DIR"
+
 
           export PYO3_CROSS_LIB_DIR="$MOCK_DIR"
           export PYTHONPATH="$MOCK_DIR${PYTHONPATH:+:$PYTHONPATH}"
           export PYO3_CROSS_PYTHON_VERSION="$PY_VER"
           export _PYTHON_SYSCONFIGDATA_NAME="$SYSCONFIG_NAME"
+
 
           RUSTFLAGS_VAR="CARGO_TARGET_$(echo "$RUST_TARGET" | tr '[:lower:]-' '[:upper:]_')_RUSTFLAGS"
 
@@ -426,10 +622,18 @@ jobs:
           -C link-arg=-Wl,--unresolved-symbols=ignore-all \
           -C link-arg=-Wl,-rpath=/data/data/com.termux/files/usr/lib"
 
+
+          echo
+          echo "Build environment:"
           echo "PYO3_CROSS_LIB_DIR=$PYO3_CROSS_LIB_DIR"
           echo "PYO3_CROSS_PYTHON_VERSION=$PYO3_CROSS_PYTHON_VERSION"
+          echo "RUST_TARGET=$RUST_TARGET"
+          echo "CC_TARGET=$CC_TARGET"
 
-          echo "Building with maturin..."
+
+          echo
+          echo "Starting maturin build..."
+
 
           maturin build \
             --release \
@@ -438,22 +642,34 @@ jobs:
             --interpreter "python${PY_VER}" \
             --skip-auditwheel
 
+
           cd target/wheels
 
-          echo "Generated wheels:"
-          ls -lah
 
           shopt -s nullglob
 
           WHEELS=( *.whl )
 
+
           if [[ ${#WHEELS[@]} -eq 0 ]]; then
-            echo "No wheel generated"
+            echo "No wheel was generated"
             exit 1
           fi
 
+
+          echo
+          echo "Generated wheels:"
+
+          for WHEEL in "${WHEELS[@]}"; do
+            ls -lh "$WHEEL"
+          done
+
+
           for OLD in "${WHEELS[@]}"; do
-            NEW="${OLD%.whl}-${PLAT_TAG}.whl"
+
+            BASE="${OLD%.whl}"
+
+            NEW="${BASE}-${PLAT_TAG}.whl"
 
             if [[ "$OLD" != "$NEW" ]]; then
               echo "Renaming:"
@@ -462,28 +678,47 @@ jobs:
 
               mv "$OLD" "$NEW"
             fi
+
           done
 
+
+          echo
           echo "Final wheels:"
+
           ls -lah *.whl
+
 
           echo "WHEEL_DIR=$(pwd)" >> "$GITHUB_OUTPUT"
 
-      - name: Validate Wheel
+
+      - name: Validate Wheels
         shell: bash
         run: |
           set -euo pipefail
 
           WHEEL_DIR="${{ steps.build_step.outputs.WHEEL_DIR }}"
 
-          find "$WHEEL_DIR" -name "*.whl" -print
+          echo "Wheel directory:"
+          echo "$WHEEL_DIR"
 
-          COUNT="$(find "$WHEEL_DIR" -name "*.whl" | wc -l)"
+          mapfile -t WHEELS < <(
+            find "$WHEEL_DIR" \
+              -maxdepth 1 \
+              -type f \
+              -name "*.whl"
+          )
 
-          if [[ "$COUNT" -lt 1 ]]; then
-            echo "No wheel found"
+          if [[ ${#WHEELS[@]} -eq 0 ]]; then
+            echo "No wheels found"
             exit 1
           fi
+
+          for WHEEL in "${WHEELS[@]}"; do
+            echo
+            echo "Wheel:"
+            ls -lh "$WHEEL"
+          done
+
 
       - name: Upload Wheel Artifact
         uses: actions/upload-artifact@v4
@@ -492,6 +727,7 @@ jobs:
           path: ${{ steps.build_step.outputs.WHEEL_DIR }}/*.whl
           if-no-files-found: error
           retention-days: 1
+
 
   release:
     name: Create GitHub Release
@@ -508,51 +744,71 @@ jobs:
       contents: write
 
     steps:
-      - name: Download All Wheels
+
+      - name: Download Wheels
         uses: actions/download-artifact@v4
         with:
           path: wheels
           merge-multiple: true
 
-      - name: List Wheels
+
+      - name: Validate Release Files
         shell: bash
         run: |
           set -euo pipefail
 
-          echo "Wheels:"
-          find wheels -type f -name "*.whl" -print
+          echo "Release wheels:"
 
-          COUNT="$(find wheels -type f -name "*.whl" | wc -l)"
+          find wheels \
+            -type f \
+            -name "*.whl" \
+            -exec ls -lh {} \;
 
+
+          COUNT="$(
+            find wheels \
+              -type f \
+              -name "*.whl" |
+            wc -l
+          )"
+
+
+          echo
           echo "Total wheels: $COUNT"
 
+
           if [[ "$COUNT" -eq 0 ]]; then
-            echo "No wheels downloaded"
+            echo "No wheels available for release"
             exit 1
           fi
+
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ needs.check-version.outputs.version }}
           name: pydantic-core v${{ needs.check-version.outputs.version }}
+
           generate_release_notes: true
           make_latest: true
+
           body: |
             ### Android / Termux Build
 
             **Package:** `${{ env.PACKAGE_NAME }}`
+
             **Version:** `${{ needs.check-version.outputs.version }}`
+
             **Built from commit:** `${{ needs.check-version.outputs.commit_hash }}`
 
-            #### Architectures
+            ### Architectures
 
             | Architecture | Android ABI |
             |---|---|
             | `linux_aarch64` | arm64-v8a |
             | `linux_armv7l` | armeabi-v7a |
 
-            #### Python
+            ### Python Versions
 
             - Python 3.9
             - Python 3.10
@@ -561,7 +817,7 @@ jobs:
             - Python 3.13
             - Python 3.14
 
-            #### Build Environment
+            ### Build Environment
 
             - Android NDK r25b
             - Android API 24
@@ -569,15 +825,16 @@ jobs:
             - Maturin
             - Termux-compatible RPATH
 
-            #### Installation
+            ### Installation
 
             ```bash
             curl -sL https://raw.githubusercontent.com/troublescope/android-pydantic-core/main/install_pydantic_core.sh | bash
             ```
 
-            Or install a wheel manually:
+            Or manually:
 
             ```bash
             pip install ./pydantic_core-*.whl
             ```
+
           files: wheels/*.whl
