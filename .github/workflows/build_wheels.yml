@@ -27,6 +27,7 @@ env:
   PACKAGE_NAME: pydantic-core
   NDK_VERSION: '25.2.9519653' # NDK r25b (Stable LTS)
   ANDROID_API: 24
+  CMDLINE_TOOLS_URL: 'https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip'
 
 permissions:
   contents: write
@@ -55,12 +56,12 @@ jobs:
             VER=$(curl -s --retry 5 --retry-delay 10 https://pypi.org/pypi/${{ env.PACKAGE_NAME }}/json | \
               python3 -c "import sys, json; print(json.load(sys.stdin)['info']['version'])")
           fi
-          
+
           if [ -z "$VER" ]; then
             echo "❌ Failed to get version from PyPI"
             exit 1
           fi
-          
+
           echo "Latest PyPI version: $VER"
           echo "version=$VER" >> $GITHUB_OUTPUT
 
@@ -72,7 +73,7 @@ jobs:
         run: |
           VER="${{ steps.pypi.outputs.version }}"
           TAG="v$VER"
-          
+
           if [ "$FORCE" == "true" ]; then
             echo "⚠️ Force build enabled — will rebuild even if release exists."
             echo "should_build=true" >> $GITHUB_OUTPUT
@@ -145,12 +146,49 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-${{ matrix.arch }}-
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
+      # --- FIX: android-actions/setup-android@v3 dropped karena
+      # mencoba install paket legacy 'tools' yang sudah dihapus Google.
+      # Diganti dengan setup manual: cmdline-tools + ndk saja (dicache).
+      - name: Cache Android SDK cmdline-tools & NDK
+        id: android-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/android-sdk/cmdline-tools
+            ~/android-sdk/ndk
+          key: android-sdk-ndk-${{ env.NDK_VERSION }}-${{ env.CMDLINE_TOOLS_URL }}
+
+      - name: Setup Android SDK (manual, tanpa paket 'tools' legacy)
+        run: |
+          set -ex
+          export ANDROID_HOME="$HOME/android-sdk"
+
+          if [ ! -d "$ANDROID_HOME/cmdline-tools/latest" ]; then
+            mkdir -p "$ANDROID_HOME/cmdline-tools"
+            curl -sL "${{ env.CMDLINE_TOOLS_URL }}" -o cmdline-tools.zip
+            unzip -q cmdline-tools.zip -d "$ANDROID_HOME/cmdline-tools"
+            mv "$ANDROID_HOME/cmdline-tools/cmdline-tools" "$ANDROID_HOME/cmdline-tools/latest"
+          else
+            echo "cmdline-tools sudah ada di cache, skip download."
+          fi
+
+          echo "ANDROID_HOME=$ANDROID_HOME" >> $GITHUB_ENV
+          echo "$ANDROID_HOME/cmdline-tools/latest/bin" >> $GITHUB_PATH
+          echo "$ANDROID_HOME/platform-tools" >> $GITHUB_PATH
 
       - name: Install NDK r25b
         run: |
-          yes | sdkmanager "ndk;${{ env.NDK_VERSION }}" > /dev/null 2>&1
+          set -ex
+          export ANDROID_HOME="$HOME/android-sdk"
+          export PATH="$ANDROID_HOME/cmdline-tools/latest/bin:$PATH"
+
+          if [ ! -d "$ANDROID_HOME/ndk/${{ env.NDK_VERSION }}" ]; then
+            yes | sdkmanager --licenses > /dev/null 2>&1 || true
+            yes | sdkmanager "ndk;${{ env.NDK_VERSION }}"
+          else
+            echo "NDK sudah ada di cache, skip download."
+          fi
+
           echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/${{ env.NDK_VERSION }}" >> $GITHUB_ENV
           echo "NDK installed at: $ANDROID_HOME/ndk/${{ env.NDK_VERSION }}"
 
@@ -303,7 +341,7 @@ jobs:
             # Replace the platform tag portion with linux_{arch}
             # Maturin outputs e.g. ...aarch64-linux-android.whl or ...aarch64_linux_android.whl
             NEW=$(echo "$OLD" | sed -E "s/(.*)-[a-z0-9_]+-?[a-z0-9_]+\.whl$/\1-${PLAT_TAG}.whl/")
-            
+
             if [ "$OLD" != "$NEW" ]; then
               echo "Renaming: $OLD -> $NEW"
               cp "$OLD" "$NEW"
@@ -348,32 +386,32 @@ jobs:
           name: ${{ env.PACKAGE_NAME }} v${{ needs.check-version.outputs.version }}
           body: |
             ### 🤖 Automated Android Build
-            
+
             **Package:** `${{ env.PACKAGE_NAME }}`
             **Version:** `${{ needs.check-version.outputs.version }}`
             **Built from commit:** `${{ needs.check-version.outputs.commit_hash }}`
-            
+
             ---
-            
+
             **Platform Support:**
             | Architecture | Device Type | Status |
             |-------------|-------------|--------|
             | `aarch64` | Modern Smartphones | ✅ |
             | `armv7` | Older Devices | ✅ |
-            
-            **Python Versions:** 3.9, 3.10, 3.11, 3.12, 3.13
-            
+
+            **Python Versions:** 3.9, 3.10, 3.11, 3.12, 3.13, 3.14
+
             ---
-            
+
             **Installation:**
-            ```bash
+```bash
             # Quick install (auto-detect):
             curl -sL https://raw.githubusercontent.com/troublescope/android-pydantic-core/main/install_pydantic_core.sh | bash
-            
+
             # Or manual:
             pip install pydantic_core-*.whl
-            ```
-            
+```
+
             **Technical Details:**
             - Built with NDK r25b (API 24)
             - Includes `RPATH` fix for Termux library location (`/data/data/com.termux/files/usr/lib`)
