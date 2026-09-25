@@ -150,12 +150,10 @@ jobs:
           - arch: arm64-v8a
             rust_target: aarch64-linux-android
             ndk_lib_arch: aarch64-linux-android
-            android_platform: android_24_arm64_v8a
 
           - arch: armeabi-v7a
             rust_target: armv7-linux-androideabi
             ndk_lib_arch: arm-linux-androideabi
-            android_platform: android_24_armeabi_v7a
 
     steps:
       - name: Checkout Repository
@@ -221,9 +219,9 @@ jobs:
             ~/android-sdk/ndk/${{ env.NDK_VERSION }}
             ~/android-sdk/platforms/android-${{ env.ANDROID_API }}
             ~/android-sdk/platform-tools
-          key: android-sdk-${{ runner.os }}-${{ env.NDK_VERSION }}-api-${{ env.ANDROID_API }}
+          key: android-sdk-v2-${{ runner.os }}-${{ env.NDK_VERSION }}-api-${{ env.ANDROID_API }}
           restore-keys: |
-            android-sdk-${{ runner.os }}-${{ env.NDK_VERSION }}-
+            android-sdk-v2-${{ runner.os }}-${{ env.NDK_VERSION }}-
 
       - name: Setup Android Command Line Tools
         shell: bash
@@ -278,19 +276,12 @@ jobs:
 
           if [[ ! -x "$SDKMANAGER" ]]; then
             echo "❌ sdkmanager not found"
-            echo "Expected:"
             echo "$SDKMANAGER"
-
-            find "$ANDROID_HOME" \
-              -maxdepth 7 \
-              -type f \
-              -name sdkmanager \
-              -print || true
-
             exit 1
           fi
 
-          echo "sdkmanager:"
+          echo
+          echo "sdkmanager version:"
           "$SDKMANAGER" --version
 
           echo "ANDROID_HOME=$ANDROID_HOME" >> "$GITHUB_ENV"
@@ -298,6 +289,40 @@ jobs:
 
           echo "$CMDLINE_DIR/bin" >> "$GITHUB_PATH"
           echo "$ANDROID_HOME/platform-tools" >> "$GITHUB_PATH"
+
+      - name: Accept Android SDK Licenses
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          ANDROID_HOME="$HOME/android-sdk"
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+
+          echo "========================================="
+          echo "Accepting Android SDK Licenses"
+          echo "========================================="
+
+          if [[ ! -x "$SDKMANAGER" ]]; then
+            echo "❌ sdkmanager not found"
+            exit 1
+          fi
+
+          set +o pipefail
+
+          for i in $(seq 1 100); do
+            printf 'y\n'
+          done | "$SDKMANAGER" --licenses
+
+          LICENSE_RESULT=$?
+
+          set -o pipefail
+
+          if [[ $LICENSE_RESULT -ne 0 ]]; then
+            echo "❌ Failed to accept Android SDK licenses"
+            exit 1
+          fi
+
+          echo "✓ Android SDK licenses accepted"
 
       - name: Install Android SDK Components
         shell: bash
@@ -312,11 +337,7 @@ jobs:
           PLATFORM_TOOLS_DIR="$ANDROID_HOME/platform-tools"
 
           echo "========================================="
-          echo "Android SDK Components"
-          echo "========================================="
-          echo "ANDROID_HOME: $ANDROID_HOME"
-          echo "NDK:          $NDK_VERSION"
-          echo "API:          $ANDROID_API"
+          echo "Installing Android SDK Components"
           echo "========================================="
 
           if [[ ! -x "$SDKMANAGER" ]]; then
@@ -325,62 +346,46 @@ jobs:
           fi
 
           echo
-          echo "sdkmanager version:"
-          "$SDKMANAGER" --version
+          echo "Installing:"
+          echo "  platform-tools"
+          echo "  platforms;android-${ANDROID_API}"
+          echo "  ndk;${NDK_VERSION}"
 
-          echo
-          echo "Accepting Android licenses..."
-
-          "$SDKMANAGER" --licenses </dev/null || true
-
-          echo
-          echo "Checking Android API ${ANDROID_API}..."
-
-          if [[ ! -d "$PLATFORM_DIR" ]]; then
-            echo "Installing Android API ${ANDROID_API}..."
-
-            "$SDKMANAGER" \
-              "platforms;android-${ANDROID_API}"
-          else
-            echo "✓ Android API ${ANDROID_API} already exists"
-          fi
-
-          echo
-          echo "Checking platform-tools..."
-
-          if [[ ! -x "$PLATFORM_TOOLS_DIR/adb" ]]; then
-            echo "Installing platform-tools..."
-
-            "$SDKMANAGER" \
-              "platform-tools"
-          else
-            echo "✓ platform-tools already exists"
-          fi
-
-          echo
-          echo "Checking NDK ${NDK_VERSION}..."
-
-          if [[ ! -d "$NDK_DIR" ]]; then
-            echo "Installing NDK ${NDK_VERSION}..."
-
-            "$SDKMANAGER" \
-              "ndk;${NDK_VERSION}"
-          else
-            echo "✓ NDK ${NDK_VERSION} already exists"
-          fi
+          "$SDKMANAGER" \
+            "platform-tools" \
+            "platforms;android-${ANDROID_API}" \
+            "ndk;${NDK_VERSION}"
 
           echo
           echo "========================================="
-          echo "Verifying Android installation"
+          echo "Verifying Android Installation"
           echo "========================================="
 
           if [[ ! -d "$PLATFORM_DIR" ]]; then
             echo "❌ Android API ${ANDROID_API} platform not found"
+
+            echo
+            echo "Available platforms:"
+            find "$ANDROID_HOME/platforms" \
+              -maxdepth 1 \
+              -mindepth 1 \
+              -type d \
+              -print 2>/dev/null || true
+
             exit 1
           fi
 
           if [[ ! -d "$NDK_DIR" ]]; then
             echo "❌ NDK ${NDK_VERSION} not found"
+
+            echo
+            echo "Available NDKs:"
+            find "$ANDROID_HOME/ndk" \
+              -maxdepth 1 \
+              -mindepth 1 \
+              -type d \
+              -print 2>/dev/null || true
+
             exit 1
           fi
 
@@ -412,6 +417,10 @@ jobs:
         run: |
           set -euo pipefail
 
+          echo "========================================="
+          echo "Android Toolchain Verification"
+          echo "========================================="
+
           echo "ANDROID_HOME=$ANDROID_HOME"
           echo "ANDROID_NDK_HOME=$ANDROID_NDK_HOME"
 
@@ -426,9 +435,6 @@ jobs:
           echo "clang:"
           "$NDK_BIN/clang" --version
 
-          echo
-          echo "NDK clang targets:"
-
           case "${{ matrix.arch }}" in
             arm64-v8a)
               CLANG_TARGET="aarch64-linux-android${ANDROID_API}"
@@ -437,15 +443,25 @@ jobs:
             armeabi-v7a)
               CLANG_TARGET="armv7a-linux-androideabi${ANDROID_API}"
               ;;
+
+            *)
+              echo "❌ Unsupported architecture"
+              exit 1
+              ;;
           esac
 
-          if [[ ! -x "$NDK_BIN/${CLANG_TARGET}-clang" ]]; then
-            echo "❌ Clang target not found:"
-            echo "$NDK_BIN/${CLANG_TARGET}-clang"
+          CLANG="$NDK_BIN/${CLANG_TARGET}-clang"
+
+          echo
+          echo "Target clang:"
+          echo "$CLANG"
+
+          if [[ ! -x "$CLANG" ]]; then
+            echo "❌ Target clang not found"
             exit 1
           fi
 
-          echo "✓ $NDK_BIN/${CLANG_TARGET}-clang"
+          echo "✓ Android toolchain ready"
 
       - name: Build Wheel
         id: build_step
@@ -673,7 +689,7 @@ jobs:
           echo "$PYO3_CROSS_PYTHON_VERSION"
 
           echo
-          echo "Building wheel with Maturin..."
+          echo "Building wheel..."
 
           maturin build \
             --release \
@@ -694,7 +710,7 @@ jobs:
           fi
 
           echo
-          echo "Maturin generated:"
+          echo "Generated wheels:"
 
           for WHEEL in "${WHEELS[@]}"; do
             echo "  $WHEEL"
@@ -704,6 +720,8 @@ jobs:
           echo "Normalizing wheel names..."
 
           for OLD in "${WHEELS[@]}"; do
+            NEW="$OLD"
+
             case "$ARCH" in
               arm64-v8a)
                 NEW="$(echo "$OLD" | sed -E 's/-linux_aarch64\.whl$/.whl/')"
@@ -715,8 +733,7 @@ jobs:
             esac
 
             if [[ "$OLD" != "$NEW" ]]; then
-              echo "  $OLD"
-              echo "  -> $NEW"
+              echo "$OLD -> $NEW"
               mv "$OLD" "$NEW"
             fi
           done
@@ -769,16 +786,6 @@ jobs:
               echo "$NAME"
               exit 1
             fi
-
-            if [[ "$NAME" == *"-linux_aarch64.whl" ]]; then
-              echo "❌ linux_aarch64 suffix still exists"
-              exit 1
-            fi
-
-            if [[ "$NAME" == *"-linux_armv7l.whl" ]]; then
-              echo "❌ linux_armv7l suffix still exists"
-              exit 1
-            fi
           done
 
       - name: Upload Wheel Artifact
@@ -829,11 +836,11 @@ jobs:
           fi
 
           for WHEEL in "${WHEELS[@]}"; do
-            echo
-            echo "$(basename "$WHEEL")"
-            ls -lh "$WHEEL"
-
             NAME="$(basename "$WHEEL")"
+
+            echo
+            echo "$NAME"
+            ls -lh "$WHEEL"
 
             if [[ ! "$NAME" =~ -cp[0-9]+-cp[0-9]+-android_24_(arm64_v8a|armeabi_v7a)\.whl$ ]]; then
               echo "❌ Invalid wheel:"
@@ -878,7 +885,7 @@ jobs:
             - Python 3.13
             - Python 3.14
 
-            ### Build
+            ### Build Toolchain
 
             - Android NDK r25b
             - Android API 24
