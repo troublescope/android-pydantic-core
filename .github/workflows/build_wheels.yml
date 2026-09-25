@@ -5,29 +5,32 @@ on:
     branches:
       - main
     paths:
-      - '.github/workflows/build_wheels.yml'
-      - 'install_pydantic_core.sh'
-      - 'README.md'
+      - ".github/workflows/build_wheels.yml"
+      - "install_pydantic_core.sh"
+      - "README.md"
+
   workflow_dispatch:
     inputs:
       force_build:
-        description: 'Force build even if release exists'
+        description: "Force build even if release exists"
         required: false
         default: false
         type: boolean
       specific_version:
-        description: 'Build a specific pydantic-core version (leave empty for latest)'
+        description: "Build a specific pydantic-core version (leave empty for latest)"
         required: false
-        default: ''
+        default: ""
+        type: string
+
   schedule:
-    # Cek PyPI setiap 6 jam untuk auto-update
-    - cron: '0 */6 * * *'
+    - cron: "0 */6 * * *"
 
 env:
   PACKAGE_NAME: pydantic-core
-  NDK_VERSION: '25.2.9519653' # NDK r25b (Stable LTS)
-  ANDROID_API: 24
-  CMDLINE_TOOLS_URL: 'https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip'
+  NDK_VERSION: "25.2.9519653"
+  ANDROID_API: "24"
+  CMDLINE_TOOLS_VERSION: "11076708"
+  CMDLINE_TOOLS_URL: "https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip"
 
 permissions:
   contents: write
@@ -36,82 +39,111 @@ jobs:
   check-version:
     name: Check PyPI Version
     runs-on: ubuntu-latest
+
     outputs:
       version: ${{ steps.pypi.outputs.version }}
       should_build: ${{ steps.check_release.outputs.should_build }}
       commit_hash: ${{ steps.commit.outputs.commit_hash }}
-    steps:
-      - uses: actions/checkout@v4
 
-      - id: pypi
-        name: Get Latest PyPI Version
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Get Latest PyPI Version
+        id: pypi
         env:
           SPECIFIC_VER: ${{ inputs.specific_version }}
+        shell: bash
         run: |
-          if [ -n "$SPECIFIC_VER" ]; then
+          set -euo pipefail
+
+          if [[ -n "${SPECIFIC_VER:-}" ]]; then
             VER="$SPECIFIC_VER"
-            echo "Using user-specified version: $VER"
+            echo "Using specified version: $VER"
           else
             echo "Fetching latest version from PyPI..."
-            VER=$(curl -s --retry 5 --retry-delay 10 https://pypi.org/pypi/${{ env.PACKAGE_NAME }}/json | \
-              python3 -c "import sys, json; print(json.load(sys.stdin)['info']['version'])")
+
+            VER="$(
+              curl -fsSL \
+                --retry 5 \
+                --retry-delay 10 \
+                --connect-timeout 30 \
+                "https://pypi.org/pypi/${PACKAGE_NAME}/json" |
+              python3 -c 'import sys,json; print(json.load(sys.stdin)["info"]["version"])'
+            )"
           fi
 
-          if [ -z "$VER" ]; then
-            echo "❌ Failed to get version from PyPI"
+          if [[ -z "$VER" ]]; then
+            echo "Failed to determine package version"
             exit 1
           fi
 
-          echo "Latest PyPI version: $VER"
-          echo "version=$VER" >> $GITHUB_OUTPUT
+          echo "Version: $VER"
+          echo "version=$VER" >> "$GITHUB_OUTPUT"
 
-      - id: check_release
-        name: Check if Release Already Exists
+      - name: Check if Release Already Exists
+        id: check_release
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           FORCE: ${{ inputs.force_build }}
+        shell: bash
         run: |
-          VER="${{ steps.pypi.outputs.version }}"
-          TAG="v$VER"
+          set -euo pipefail
 
-          if [ "$FORCE" == "true" ]; then
-            echo "⚠️ Force build enabled — will rebuild even if release exists."
-            echo "should_build=true" >> $GITHUB_OUTPUT
+          VER="${{ steps.pypi.outputs.version }}"
+          TAG="v${VER}"
+
+          if [[ "${FORCE:-false}" == "true" ]]; then
+            echo "Force build enabled"
+            echo "should_build=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
-          if gh release view "$TAG" > /dev/null 2>&1; then
-            echo "✅ Release $TAG already exists. Skipping build."
-            echo "should_build=false" >> $GITHUB_OUTPUT
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists"
+            echo "should_build=false" >> "$GITHUB_OUTPUT"
           else
-            echo "🔄 Release $TAG not found. Build needed."
-            echo "should_build=true" >> $GITHUB_OUTPUT
+            echo "Release $TAG does not exist"
+            echo "should_build=true" >> "$GITHUB_OUTPUT"
           fi
 
-      - id: commit
-        name: Record Commit Hash
+      - name: Record Commit Hash
+        id: commit
+        shell: bash
         run: |
-          echo "commit_hash=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+          echo "commit_hash=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
 
   build:
-    name: Build ${{ matrix.arch }} (Py${{ matrix.python-version }})
+    name: Build ${{ matrix.arch }} / Python ${{ matrix.python-version }}
     needs: check-version
+
     if: needs.check-version.outputs.should_build == 'true'
+
     runs-on: ubuntu-latest
+
     strategy:
       fail-fast: false
       matrix:
-        python-version: ['3.9', '3.10', '3.11', '3.12', '3.13', '3.14']
-        arch: ['arm64-v8a', 'armeabi-v7a']
+        python-version:
+          - "3.9"
+          - "3.10"
+          - "3.11"
+          - "3.12"
+          - "3.13"
+          - "3.14"
+
+        arch:
+          - arm64-v8a
+          - armeabi-v7a
+
         include:
           - arch: arm64-v8a
             rust_target: aarch64-linux-android
-            cc_target_suffix: ''
             ndk_lib_arch: aarch64-linux-android
             plat_tag: linux_aarch64
+
           - arch: armeabi-v7a
             rust_target: armv7-linux-androideabi
-            cc_target_suffix: ''
             ndk_lib_arch: arm-linux-androideabi
             plat_tag: linux_armv7l
 
@@ -119,145 +151,197 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Setup Python ${{ matrix.python-version }}
+      - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
 
-      - name: Install Maturin
+      - name: Install Build Dependencies
+        shell: bash
         run: |
+          set -euo pipefail
+
           python -m pip install --upgrade pip
-          pip install maturin
+          python -m pip install maturin
 
-      - name: Setup Rust & Targets
+      - name: Setup Rust
+        shell: bash
         run: |
-          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-          source "$HOME/.cargo/env"
-          rustup target add ${{ matrix.rust_target }}
-          echo "Rust version: $(rustc --version)"
+          set -euo pipefail
 
-      - name: Cache Cargo Registry
+          curl --proto "=https" \
+            --tlsv1.2 \
+            -sSf \
+            https://sh.rustup.rs |
+            sh -s -- -y
+
+          source "$HOME/.cargo/env"
+
+          rustup target add "${{ matrix.rust_target }}"
+
+          echo "Rust:"
+          rustc --version
+          cargo --version
+
+      - name: Cache Cargo
         uses: actions/cache@v4
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-          key: ${{ runner.os }}-cargo-${{ matrix.arch }}-${{ hashFiles('**/Cargo.lock') }}
+            target
+          key: cargo-${{ runner.os }}-${{ matrix.arch }}-${{ matrix.python-version }}-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-cargo-${{ matrix.arch }}-
+            cargo-${{ runner.os }}-${{ matrix.arch }}-${{ matrix.python-version }}-
+            cargo-${{ runner.os }}-${{ matrix.arch }}-
 
-      # --- FIX: android-actions/setup-android@v3 dropped karena
-      # mencoba install paket legacy 'tools' yang sudah dihapus Google.
-      # Diganti dengan setup manual: cmdline-tools + ndk saja (dicache).
-      - name: Cache Android SDK cmdline-tools & NDK
-        id: android-cache
+      - name: Cache Android SDK
         uses: actions/cache@v4
         with:
           path: |
-            ~/android-sdk/cmdline-tools
-            ~/android-sdk/ndk
-          key: android-sdk-ndk-${{ env.NDK_VERSION }}-${{ env.CMDLINE_TOOLS_URL }}
+            ~/android-sdk/cmdline-tools/latest
+            ~/android-sdk/ndk/${{ env.NDK_VERSION }}
+          key: android-${{ runner.os }}-cmdline-${{ env.CMDLINE_TOOLS_VERSION }}-ndk-${{ env.NDK_VERSION }}
 
-      - name: Setup Android SDK (manual, tanpa paket 'tools' legacy)
+      - name: Setup Android SDK
+        shell: bash
         run: |
-          set -ex
-          export ANDROID_HOME="$HOME/android-sdk"
+          set -euo pipefail
 
-          if [ ! -d "$ANDROID_HOME/cmdline-tools/latest" ]; then
-            mkdir -p "$ANDROID_HOME/cmdline-tools"
-            curl -sL "${{ env.CMDLINE_TOOLS_URL }}" -o cmdline-tools.zip
-            unzip -q cmdline-tools.zip -d "$ANDROID_HOME/cmdline-tools"
-            mv "$ANDROID_HOME/cmdline-tools/cmdline-tools" "$ANDROID_HOME/cmdline-tools/latest"
-          else
-            echo "cmdline-tools sudah ada di cache, skip download."
+          ANDROID_HOME="$HOME/android-sdk"
+
+          mkdir -p "$ANDROID_HOME/cmdline-tools"
+
+          if [[ ! -x "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" ]]; then
+            rm -rf "$ANDROID_HOME/cmdline-tools/latest"
+            mkdir -p "$ANDROID_HOME/cmdline-tools/latest"
+
+            curl -fsSL \
+              "${{ env.CMDLINE_TOOLS_URL }}" \
+              -o /tmp/cmdline-tools.zip
+
+            unzip -q /tmp/cmdline-tools.zip \
+              -d /tmp/android-cmdline-tools
+
+            rm -rf "$ANDROID_HOME/cmdline-tools/latest"
+            mv \
+              /tmp/android-cmdline-tools/cmdline-tools \
+              "$ANDROID_HOME/cmdline-tools/latest"
           fi
 
-          echo "ANDROID_HOME=$ANDROID_HOME" >> $GITHUB_ENV
-          echo "$ANDROID_HOME/cmdline-tools/latest/bin" >> $GITHUB_PATH
-          echo "$ANDROID_HOME/platform-tools" >> $GITHUB_PATH
+          echo "ANDROID_HOME=$ANDROID_HOME" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$ANDROID_HOME" >> "$GITHUB_ENV"
 
-      - name: Install NDK r25b
+          echo "$ANDROID_HOME/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
+          echo "$ANDROID_HOME/platform-tools" >> "$GITHUB_PATH"
+
+          sdkmanager --version
+
+      - name: Install Android NDK
+        shell: bash
         run: |
-          set -ex
-          export ANDROID_HOME="$HOME/android-sdk"
-          export PATH="$ANDROID_HOME/cmdline-tools/latest/bin:$PATH"
+          set -euo pipefail
 
-          if [ ! -d "$ANDROID_HOME/ndk/${{ env.NDK_VERSION }}" ]; then
-            yes | sdkmanager --licenses > /dev/null 2>&1 || true
-            yes | sdkmanager "ndk;${{ env.NDK_VERSION }}"
-          else
-            echo "NDK sudah ada di cache, skip download."
+          ANDROID_HOME="$HOME/android-sdk"
+
+          if [[ ! -d "$ANDROID_HOME/ndk/${{ env.NDK_VERSION }}" ]]; then
+            yes | sdkmanager --licenses >/dev/null 2>&1 || true
+            sdkmanager "ndk;${{ env.NDK_VERSION }}"
           fi
 
-          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/${{ env.NDK_VERSION }}" >> $GITHUB_ENV
-          echo "NDK installed at: $ANDROID_HOME/ndk/${{ env.NDK_VERSION }}"
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/${{ env.NDK_VERSION }}" >> "$GITHUB_ENV"
 
-      - name: Build Wheel (Termux Cross-Compile Fix)
+          echo "NDK:"
+          "$ANDROID_HOME/ndk/${{ env.NDK_VERSION }}/source.properties"
+
+      - name: Build Wheel
         id: build_step
+        shell: bash
         run: |
-          set -ex
+          set -euo pipefail
+
           source "$HOME/.cargo/env"
 
-          # --- Environment Configuration ---
           PY_VER="${{ matrix.python-version }}"
           PKG_VER="${{ needs.check-version.outputs.version }}"
           ARCH="${{ matrix.arch }}"
           RUST_TARGET="${{ matrix.rust_target }}"
           PLAT_TAG="${{ matrix.plat_tag }}"
           NDK_LIB_ARCH="${{ matrix.ndk_lib_arch }}"
-          export ANDROID_API_LEVEL=${{ env.ANDROID_API }}
+
+          export ANDROID_API_LEVEL="${{ env.ANDROID_API }}"
 
           NDK_BIN="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
           NDK_SYSROOT="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot"
+
           export PATH="$NDK_BIN:$PATH"
 
-          # --- Determine CC Target Triple ---
-          if [ "$ARCH" == "arm64-v8a" ]; then
-            CC_TARGET="aarch64-linux-android${ANDROID_API_LEVEL}"
-          elif [ "$ARCH" == "armeabi-v7a" ]; then
-            CC_TARGET="armv7a-linux-androideabi${ANDROID_API_LEVEL}"
+          case "$ARCH" in
+            arm64-v8a)
+              CC_TARGET="aarch64-linux-android${ANDROID_API_LEVEL}"
+              ;;
+            armeabi-v7a)
+              CC_TARGET="armv7a-linux-androideabi${ANDROID_API_LEVEL}"
+              ;;
+            *)
+              echo "Unsupported architecture: $ARCH"
+              exit 1
+              ;;
+          esac
+
+          echo "========================================="
+          echo "Package:      $PKG_VER"
+          echo "Architecture: $ARCH"
+          echo "Python:       $PY_VER"
+          echo "Rust target:  $RUST_TARGET"
+          echo "CC target:    $CC_TARGET"
+          echo "Platform:     $PLAT_TAG"
+          echo "========================================="
+
+          CLANG="$NDK_BIN/${CC_TARGET}-clang"
+
+          if [[ ! -x "$CLANG" ]]; then
+            echo "Clang wrapper not found:"
+            echo "$CLANG"
+            exit 1
           fi
 
-          echo "========================================="
-          echo "  Building pydantic-core v$PKG_VER"
-          echo "  Arch:      $ARCH"
-          echo "  Python:    $PY_VER"
-          echo "  Rust Target: $RUST_TARGET"
-          echo "  CC Target:    $CC_TARGET"
-          echo "  Plat Tag:     $PLAT_TAG"
-          echo "========================================="
-
-          # --- Configure Linker ---
-          CLANG_WRAPPER="${CC_TARGET}-clang"
           LINKER_VAR="CARGO_TARGET_$(echo "$RUST_TARGET" | tr '[:lower:]-' '[:upper:]_')_LINKER"
-          if [ -f "$NDK_BIN/$CLANG_WRAPPER" ]; then
-            export $LINKER_VAR="$NDK_BIN/$CLANG_WRAPPER"
-            echo "Linker: $NDK_BIN/$CLANG_WRAPPER"
-          else
-            export $LINKER_VAR="$NDK_BIN/clang"
-            echo "⚠️ Wrapper not found, using: $NDK_BIN/clang"
-          fi
+          export "${LINKER_VAR}=$CLANG"
 
-          # --- Mocking Python (Termux Strategy) ---
+          echo "Linker: $CLANG"
+
           MOCK_DIR="$(pwd)/mock_libs"
           mkdir -p "$MOCK_DIR"
 
-          echo "Creating mock libpython$PY_VER.so..."
-          "$NDK_BIN/clang" --target=$CC_TARGET -shared \
-            -Wl,-soname,libpython$PY_VER.so \
-            -o "$MOCK_DIR/libpython$PY_VER.so" -xc /dev/null
+          echo "Creating mock libpython..."
 
-          echo "Copying libdl.so from NDK sysroot..."
-          LIBDL_PATH=$(find "$NDK_SYSROOT" -name "libdl.so" | grep "$NDK_LIB_ARCH" | head -n 1)
-          if [ -z "$LIBDL_PATH" ]; then
-            echo "❌ Could not find libdl.so in sysroot"
+          "$NDK_BIN/clang" \
+            --target="$CC_TARGET" \
+            -shared \
+            -Wl,-soname,libpython${PY_VER}.so \
+            -o "$MOCK_DIR/libpython${PY_VER}.so" \
+            -xc /dev/null
+
+          echo "Finding libdl..."
+
+          LIBDL_PATH="$(
+            find "$NDK_SYSROOT" \
+              -path "*${NDK_LIB_ARCH}*" \
+              -name "libdl.so" |
+            head -n 1
+          )"
+
+          if [[ -z "$LIBDL_PATH" ]]; then
+            echo "libdl.so not found"
             exit 1
           fi
-          cp "$LIBDL_PATH" "$MOCK_DIR/"
 
-          # --- Create Sysconfig File ---
+          cp "$LIBDL_PATH" "$MOCK_DIR/libdl.so"
+
           SYSCONFIG_NAME="_sysconfigdata__linux_${RUST_TARGET}"
-          cat > "$MOCK_DIR/${SYSCONFIG_NAME}.py" << 'SYSCONFIG_EOF'
+
+          cat > "$MOCK_DIR/${SYSCONFIG_NAME}.py" <<'PYEOF'
           build_time_vars = {
               'abiflags': '',
               'ABIFLAGS': '',
@@ -277,46 +361,64 @@ jobs:
               'Py_DEBUG': 0,
               'WITH_PYMALLOC': 1,
           }
-          SYSCONFIG_EOF
+          PYEOF
 
-          # Replace placeholders with actual values
           sed -i \
             -e "s|PYVER_PLACEHOLDER|$PY_VER|g" \
             -e "s|MOCKDIR_PLACEHOLDER|$MOCK_DIR|g" \
             "$MOCK_DIR/${SYSCONFIG_NAME}.py"
 
-          echo "Mock sysconfig created: $MOCK_DIR/${SYSCONFIG_NAME}.py"
-          cat "$MOCK_DIR/${SYSCONFIG_NAME}.py"
+          mkdir -p build_src
+          cd build_src
 
-          # --- Download Source Code ---
-          mkdir -p build_src && cd build_src
-          echo "Fetching source URL for ${{ env.PACKAGE_NAME }}==$PKG_VER..."
-          SOURCE_URL=$(curl -s --connect-timeout 30 --retry 5 --retry-delay 10 \
-            https://pypi.org/pypi/${{ env.PACKAGE_NAME }}/$PKG_VER/json | \
-            python3 -c "import sys, json; data=json.load(sys.stdin); print([u['url'] for u in data['urls'] if u['packagetype'] == 'sdist'][0])")
+          echo "Fetching pydantic-core $PKG_VER..."
 
-          if [ -z "$SOURCE_URL" ]; then
-            echo "❌ Could not find sdist URL on PyPI"
-            exit 1
-          fi
+          SOURCE_URL="$(
+            curl -fsSL \
+              --retry 5 \
+              --retry-delay 10 \
+              --connect-timeout 30 \
+              "https://pypi.org/pypi/${PACKAGE_NAME}/${PKG_VER}/json" |
+            python3 -c '
+          import sys
+          import json
 
-          echo "Downloading from: $SOURCE_URL"
-          curl -L --connect-timeout 30 --retry 5 --retry-delay 10 "$SOURCE_URL" -o source.tar.gz
+          data = json.load(sys.stdin)
+
+          urls = [
+              x["url"]
+              for x in data["urls"]
+              if x["packagetype"] == "sdist"
+          ]
+
+          if not urls:
+              raise SystemExit("No sdist found")
+
+          print(urls[0])
+          '
+          )"
+
+          echo "Source: $SOURCE_URL"
+
+          curl -fL \
+            --retry 5 \
+            --retry-delay 10 \
+            --connect-timeout 30 \
+            "$SOURCE_URL" \
+            -o source.tar.gz
+
           tar -xzf source.tar.gz
+
           cd pydantic_core-*/
 
-          # --- Apply Cross-Compilation Env Vars ---
           export PYO3_CROSS_LIB_DIR="$MOCK_DIR"
-          export PYTHONPATH="$MOCK_DIR:$PYTHONPATH"
+          export PYTHONPATH="$MOCK_DIR${PYTHONPATH:+:$PYTHONPATH}"
           export PYO3_CROSS_PYTHON_VERSION="$PY_VER"
           export _PYTHON_SYSCONFIGDATA_NAME="$SYSCONFIG_NAME"
 
-          # --- Rust Flags ---
-          # 1. --no-as-needed: Forces recording of libpython dependency
-          # 2. -rpath: Hardcodes Termux library path so .so finds libpython at runtime
           RUSTFLAGS_VAR="CARGO_TARGET_$(echo "$RUST_TARGET" | tr '[:lower:]-' '[:upper:]_')_RUSTFLAGS"
-          export $RUSTFLAGS_VAR="\
-          -L native=$MOCK_DIR \
+
+          export "${RUSTFLAGS_VAR}=-L native=$MOCK_DIR \
           -C link-arg=--target=$CC_TARGET \
           -C link-arg=-Wl,--no-as-needed \
           -C link-arg=-lpython$PY_VER \
@@ -324,98 +426,158 @@ jobs:
           -C link-arg=-Wl,--unresolved-symbols=ignore-all \
           -C link-arg=-Wl,-rpath=/data/data/com.termux/files/usr/lib"
 
-          echo "RUSTFLAGS ($RUSTFLAGS_VAR): ${!RUSTFLAGS_VAR}"
-          echo "PYO3_CROSS_LIB_DIR: $PYO3_CROSS_LIB_DIR"
-          echo "PYO3_CROSS_PYTHON_VERSION: $PYO3_CROSS_PYTHON_VERSION"
+          echo "PYO3_CROSS_LIB_DIR=$PYO3_CROSS_LIB_DIR"
+          echo "PYO3_CROSS_PYTHON_VERSION=$PYO3_CROSS_PYTHON_VERSION"
 
-          # --- Build with Maturin ---
-          echo "🚀 Starting Maturin build..."
-          maturin build --release --strip --target "$RUST_TARGET" --interpreter python"$PY_VER" --skip-auditwheel
+          echo "Building with maturin..."
 
-          # --- Rename Wheel for Termux Compatibility ---
+          maturin build \
+            --release \
+            --strip \
+            --target "$RUST_TARGET" \
+            --interpreter "python${PY_VER}" \
+            --skip-auditwheel
+
           cd target/wheels
-          echo "Original wheels:"
-          ls -la *.whl
 
-          for OLD in *.whl; do
-            # Replace the platform tag portion with linux_{arch}
-            # Maturin outputs e.g. ...aarch64-linux-android.whl or ...aarch64_linux_android.whl
-            NEW=$(echo "$OLD" | sed -E "s/(.*)-[a-z0-9_]+-?[a-z0-9_]+\.whl$/\1-${PLAT_TAG}.whl/")
+          echo "Generated wheels:"
+          ls -lah
 
-            if [ "$OLD" != "$NEW" ]; then
-              echo "Renaming: $OLD -> $NEW"
-              cp "$OLD" "$NEW"
+          shopt -s nullglob
+
+          WHEELS=( *.whl )
+
+          if [[ ${#WHEELS[@]} -eq 0 ]]; then
+            echo "No wheel generated"
+            exit 1
+          fi
+
+          for OLD in "${WHEELS[@]}"; do
+            NEW="${OLD%.whl}-${PLAT_TAG}.whl"
+
+            if [[ "$OLD" != "$NEW" ]]; then
+              echo "Renaming:"
+              echo "  $OLD"
+              echo "  $NEW"
+
+              mv "$OLD" "$NEW"
             fi
           done
 
           echo "Final wheels:"
-          ls -la *.whl
+          ls -lah *.whl
 
-          echo "WHEEL_DIR=$(pwd)" >> $GITHUB_OUTPUT
+          echo "WHEEL_DIR=$(pwd)" >> "$GITHUB_OUTPUT"
 
-      - name: Upload Temporary Artifact
+      - name: Validate Wheel
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          WHEEL_DIR="${{ steps.build_step.outputs.WHEEL_DIR }}"
+
+          find "$WHEEL_DIR" -name "*.whl" -print
+
+          COUNT="$(find "$WHEEL_DIR" -name "*.whl" | wc -l)"
+
+          if [[ "$COUNT" -lt 1 ]]; then
+            echo "No wheel found"
+            exit 1
+          fi
+
+      - name: Upload Wheel Artifact
         uses: actions/upload-artifact@v4
         with:
           name: wheel-${{ matrix.python-version }}-${{ matrix.arch }}
           path: ${{ steps.build_step.outputs.WHEEL_DIR }}/*.whl
+          if-no-files-found: error
           retention-days: 1
 
   release:
     name: Create GitHub Release
-    needs: [check-version, build]
+
+    needs:
+      - check-version
+      - build
+
     if: needs.check-version.outputs.should_build == 'true'
+
     runs-on: ubuntu-latest
+
     permissions:
       contents: write
+
     steps:
-      - name: Download All Artifacts
+      - name: Download All Wheels
         uses: actions/download-artifact@v4
         with:
           path: wheels
           merge-multiple: true
 
-      - name: List Downloaded Wheels
+      - name: List Wheels
+        shell: bash
         run: |
-          echo "📦 Wheels to release:"
-          find wheels/ -name "*.whl" -exec ls -la {} \;
+          set -euo pipefail
+
+          echo "Wheels:"
+          find wheels -type f -name "*.whl" -print
+
+          COUNT="$(find wheels -type f -name "*.whl" | wc -l)"
+
+          echo "Total wheels: $COUNT"
+
+          if [[ "$COUNT" -eq 0 ]]; then
+            echo "No wheels downloaded"
+            exit 1
+          fi
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ needs.check-version.outputs.version }}
-          name: ${{ env.PACKAGE_NAME }} v${{ needs.check-version.outputs.version }}
+          name: pydantic-core v${{ needs.check-version.outputs.version }}
+          generate_release_notes: true
+          make_latest: true
           body: |
-            ### 🤖 Automated Android Build
+            ### Android / Termux Build
 
             **Package:** `${{ env.PACKAGE_NAME }}`
             **Version:** `${{ needs.check-version.outputs.version }}`
             **Built from commit:** `${{ needs.check-version.outputs.commit_hash }}`
 
-            ---
+            #### Architectures
 
-            **Platform Support:**
-            | Architecture | Device Type | Status |
-            |-------------|-------------|--------|
-            | `aarch64` | Modern Smartphones | ✅ |
-            | `armv7` | Older Devices | ✅ |
+            | Architecture | Android ABI |
+            |---|---|
+            | `linux_aarch64` | arm64-v8a |
+            | `linux_armv7l` | armeabi-v7a |
 
-            **Python Versions:** 3.9, 3.10, 3.11, 3.12, 3.13, 3.14
+            #### Python
 
-            ---
+            - Python 3.9
+            - Python 3.10
+            - Python 3.11
+            - Python 3.12
+            - Python 3.13
+            - Python 3.14
 
-            **Installation:**
-```bash
-            # Quick install (auto-detect):
+            #### Build Environment
+
+            - Android NDK r25b
+            - Android API 24
+            - Rust
+            - Maturin
+            - Termux-compatible RPATH
+
+            #### Installation
+
+            ```bash
             curl -sL https://raw.githubusercontent.com/troublescope/android-pydantic-core/main/install_pydantic_core.sh | bash
+            ```
 
-            # Or manual:
-            pip install pydantic_core-*.whl
-```
+            Or install a wheel manually:
 
-            **Technical Details:**
-            - Built with NDK r25b (API 24)
-            - Includes `RPATH` fix for Termux library location (`/data/data/com.termux/files/usr/lib`)
-            - Linked with `--no-as-needed` to ensure `libpython` loading
-            - Auto-triggered by PyPI version check (every 6 hours)
+            ```bash
+            pip install ./pydantic_core-*.whl
+            ```
           files: wheels/*.whl
-          make_latest: true
