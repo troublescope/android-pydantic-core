@@ -47,7 +47,7 @@ jobs:
       commit_hash: ${{ steps.commit.outputs.commit_hash }}
 
     steps:
-      - name: Checkout
+      - name: Checkout Repository
         uses: actions/checkout@v4
 
       - name: Get PyPI Version
@@ -62,7 +62,7 @@ jobs:
             VERSION="$SPECIFIC_VER"
             echo "Using requested version: $VERSION"
           else
-            echo "Fetching latest pydantic-core from PyPI..."
+            echo "Fetching latest version from PyPI..."
 
             VERSION="$(
               curl -fsSL \
@@ -81,7 +81,7 @@ jobs:
           fi
 
           if [[ -z "$VERSION" ]]; then
-            echo "Failed to determine package version"
+            echo "❌ Failed to determine package version"
             exit 1
           fi
 
@@ -101,20 +101,20 @@ jobs:
           TAG="v${VERSION}"
 
           if [[ "${FORCE_BUILD:-false}" == "true" ]]; then
-            echo "Force build enabled"
+            echo "⚠️ Force build enabled"
             echo "should_build=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
           if gh release view "$TAG" >/dev/null 2>&1; then
-            echo "Release $TAG already exists"
+            echo "✅ Release $TAG already exists"
             echo "should_build=false" >> "$GITHUB_OUTPUT"
           else
-            echo "Release $TAG does not exist"
+            echo "🔨 Release $TAG does not exist"
             echo "should_build=true" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Record Commit
+      - name: Record Commit Hash
         id: commit
         shell: bash
         run: |
@@ -158,10 +158,10 @@ jobs:
             android_platform: android_24_armeabi_v7a
 
     steps:
-      - name: Checkout
+      - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Setup Python
+      - name: Setup Python ${{ matrix.python-version }}
         uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
@@ -214,14 +214,18 @@ jobs:
             ~/android-sdk/cmdline-tools/latest
           key: android-cmdline-${{ runner.os }}-${{ env.CMDLINE_TOOLS_VERSION }}
 
-      - name: Cache Android NDK
+      - name: Cache Android SDK Components
         uses: actions/cache@v4
         with:
           path: |
             ~/android-sdk/ndk/${{ env.NDK_VERSION }}
-          key: android-ndk-${{ runner.os }}-${{ env.NDK_VERSION }}
+            ~/android-sdk/platforms/android-${{ env.ANDROID_API }}
+            ~/android-sdk/platform-tools
+          key: android-sdk-${{ runner.os }}-${{ env.NDK_VERSION }}-api-${{ env.ANDROID_API }}
+          restore-keys: |
+            android-sdk-${{ runner.os }}-${{ env.NDK_VERSION }}-
 
-      - name: Setup Android SDK
+      - name: Setup Android Command Line Tools
         shell: bash
         run: |
           set -euo pipefail
@@ -232,8 +236,12 @@ jobs:
 
           mkdir -p "$ANDROID_HOME/cmdline-tools"
 
+          echo "========================================="
+          echo "Android Command Line Tools"
+          echo "========================================="
+
           if [[ ! -x "$SDKMANAGER" ]]; then
-            echo "Installing Android command-line tools..."
+            echo "Downloading Android command-line tools..."
 
             rm -rf "$CMDLINE_DIR"
             rm -rf /tmp/android-cmdline-tools
@@ -245,7 +253,7 @@ jobs:
               --retry 5 \
               --retry-delay 5 \
               --connect-timeout 30 \
-              "${CMDLINE_TOOLS_URL}" \
+              "$CMDLINE_TOOLS_URL" \
               -o /tmp/cmdline-tools.zip
 
             unzip -q \
@@ -253,19 +261,32 @@ jobs:
               -d /tmp/android-cmdline-tools
 
             if [[ ! -d "/tmp/android-cmdline-tools/cmdline-tools" ]]; then
-              echo "Invalid Android command-line tools archive"
-              find /tmp/android-cmdline-tools -maxdepth 3 -type f -print
+              echo "❌ Invalid Android command-line tools archive"
+              find /tmp/android-cmdline-tools \
+                -maxdepth 4 \
+                -type f \
+                -print
               exit 1
             fi
 
             mv \
               /tmp/android-cmdline-tools/cmdline-tools \
               "$CMDLINE_DIR"
+          else
+            echo "✓ Android command-line tools found in cache"
           fi
 
           if [[ ! -x "$SDKMANAGER" ]]; then
-            echo "sdkmanager installation failed"
-            find "$ANDROID_HOME" -maxdepth 6 -type f -print || true
+            echo "❌ sdkmanager not found"
+            echo "Expected:"
+            echo "$SDKMANAGER"
+
+            find "$ANDROID_HOME" \
+              -maxdepth 7 \
+              -type f \
+              -name sdkmanager \
+              -print || true
+
             exit 1
           fi
 
@@ -278,56 +299,113 @@ jobs:
           echo "$CMDLINE_DIR/bin" >> "$GITHUB_PATH"
           echo "$ANDROID_HOME/platform-tools" >> "$GITHUB_PATH"
 
-      - name: Install Android NDK
+      - name: Install Android SDK Components
         shell: bash
         run: |
           set -euo pipefail
 
           ANDROID_HOME="$HOME/android-sdk"
           SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+
           NDK_DIR="$ANDROID_HOME/ndk/${NDK_VERSION}"
+          PLATFORM_DIR="$ANDROID_HOME/platforms/android-${ANDROID_API}"
+          PLATFORM_TOOLS_DIR="$ANDROID_HOME/platform-tools"
+
+          echo "========================================="
+          echo "Android SDK Components"
+          echo "========================================="
+          echo "ANDROID_HOME: $ANDROID_HOME"
+          echo "NDK:          $NDK_VERSION"
+          echo "API:          $ANDROID_API"
+          echo "========================================="
 
           if [[ ! -x "$SDKMANAGER" ]]; then
-            echo "sdkmanager not found:"
-            echo "$SDKMANAGER"
-            find "$ANDROID_HOME" \
-              -maxdepth 6 \
-              -type f \
-              -name sdkmanager \
-              -print || true
+            echo "❌ sdkmanager not found"
             exit 1
           fi
 
-          echo "Accepting Android SDK licenses..."
-          yes | "$SDKMANAGER" --licenses >/dev/null 2>&1 || true
+          echo
+          echo "sdkmanager version:"
+          "$SDKMANAGER" --version
+
+          echo
+          echo "Accepting Android licenses..."
+
+          "$SDKMANAGER" --licenses </dev/null || true
+
+          echo
+          echo "Checking Android API ${ANDROID_API}..."
+
+          if [[ ! -d "$PLATFORM_DIR" ]]; then
+            echo "Installing Android API ${ANDROID_API}..."
+
+            "$SDKMANAGER" \
+              "platforms;android-${ANDROID_API}"
+          else
+            echo "✓ Android API ${ANDROID_API} already exists"
+          fi
+
+          echo
+          echo "Checking platform-tools..."
+
+          if [[ ! -x "$PLATFORM_TOOLS_DIR/adb" ]]; then
+            echo "Installing platform-tools..."
+
+            "$SDKMANAGER" \
+              "platform-tools"
+          else
+            echo "✓ platform-tools already exists"
+          fi
+
+          echo
+          echo "Checking NDK ${NDK_VERSION}..."
 
           if [[ ! -d "$NDK_DIR" ]]; then
             echo "Installing NDK ${NDK_VERSION}..."
 
             "$SDKMANAGER" \
-              "platform-tools" \
-              "platforms;android-${ANDROID_API}" \
               "ndk;${NDK_VERSION}"
           else
-            echo "NDK ${NDK_VERSION} already exists"
+            echo "✓ NDK ${NDK_VERSION} already exists"
+          fi
+
+          echo
+          echo "========================================="
+          echo "Verifying Android installation"
+          echo "========================================="
+
+          if [[ ! -d "$PLATFORM_DIR" ]]; then
+            echo "❌ Android API ${ANDROID_API} platform not found"
+            exit 1
           fi
 
           if [[ ! -d "$NDK_DIR" ]]; then
-            echo "NDK installation failed"
+            echo "❌ NDK ${NDK_VERSION} not found"
             exit 1
           fi
 
-          if [[ ! -d "$ANDROID_HOME/platforms/android-${ANDROID_API}" ]]; then
-            echo "Android API ${ANDROID_API} platform not found"
+          if [[ ! -x "$PLATFORM_TOOLS_DIR/adb" ]]; then
+            echo "❌ platform-tools not found"
             exit 1
           fi
+
+          echo "✓ Android API ${ANDROID_API}"
+          echo "✓ NDK ${NDK_VERSION}"
+          echo "✓ platform-tools"
+
+          echo
+          echo "NDK information:"
+          cat "$NDK_DIR/source.properties"
+
+          echo
+          echo "Setting environment variables..."
 
           echo "ANDROID_HOME=$ANDROID_HOME" >> "$GITHUB_ENV"
           echo "ANDROID_SDK_ROOT=$ANDROID_HOME" >> "$GITHUB_ENV"
           echo "ANDROID_NDK_HOME=$NDK_DIR" >> "$GITHUB_ENV"
 
-          echo "NDK installed:"
-          cat "$NDK_DIR/source.properties"
+          echo "$ANDROID_HOME/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
+          echo "$ANDROID_HOME/platform-tools" >> "$GITHUB_PATH"
 
       - name: Verify Android Toolchain
         shell: bash
@@ -340,8 +418,34 @@ jobs:
           SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
           NDK_BIN="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
 
+          echo
+          echo "sdkmanager:"
           "$SDKMANAGER" --version
+
+          echo
+          echo "clang:"
           "$NDK_BIN/clang" --version
+
+          echo
+          echo "NDK clang targets:"
+
+          case "${{ matrix.arch }}" in
+            arm64-v8a)
+              CLANG_TARGET="aarch64-linux-android${ANDROID_API}"
+              ;;
+
+            armeabi-v7a)
+              CLANG_TARGET="armv7a-linux-androideabi${ANDROID_API}"
+              ;;
+          esac
+
+          if [[ ! -x "$NDK_BIN/${CLANG_TARGET}-clang" ]]; then
+            echo "❌ Clang target not found:"
+            echo "$NDK_BIN/${CLANG_TARGET}-clang"
+            exit 1
+          fi
+
+          echo "✓ $NDK_BIN/${CLANG_TARGET}-clang"
 
       - name: Build Wheel
         id: build_step
@@ -368,33 +472,33 @@ jobs:
             arm64-v8a)
               CC_TARGET="aarch64-linux-android${ANDROID_API_LEVEL}"
               ;;
+
             armeabi-v7a)
               CC_TARGET="armv7a-linux-androideabi${ANDROID_API_LEVEL}"
               ;;
+
             *)
-              echo "Unsupported architecture: $ARCH"
+              echo "❌ Unsupported architecture: $ARCH"
               exit 1
               ;;
           esac
 
           echo "========================================="
-          echo "Package:       $PKG_VER"
+          echo "Building pydantic-core"
+          echo "========================================="
+          echo "Version:       $PKG_VER"
           echo "Architecture:  $ARCH"
           echo "Python:        $PY_VER"
           echo "Rust target:   $RUST_TARGET"
           echo "CC target:     $CC_TARGET"
+          echo "Android API:   $ANDROID_API_LEVEL"
           echo "========================================="
 
           CLANG="$NDK_BIN/${CC_TARGET}-clang"
 
           if [[ ! -x "$CLANG" ]]; then
-            echo "Clang wrapper not found:"
+            echo "❌ Clang wrapper not found:"
             echo "$CLANG"
-            find "$NDK_BIN" \
-              -maxdepth 1 \
-              -type f \
-              -name "*android*clang" \
-              -print | head -50
             exit 1
           fi
 
@@ -402,11 +506,16 @@ jobs:
 
           export "${LINKER_VAR}=$CLANG"
 
+          echo
+          echo "Linker:"
+          echo "${!LINKER_VAR}"
+
           MOCK_DIR="$(pwd)/mock_libs"
 
           mkdir -p "$MOCK_DIR"
 
-          echo "Creating mock libpython..."
+          echo
+          echo "Creating mock libpython${PY_VER}.so..."
 
           "$NDK_BIN/clang" \
             --target="$CC_TARGET" \
@@ -415,6 +524,9 @@ jobs:
             -o "$MOCK_DIR/libpython${PY_VER}.so" \
             -xc /dev/null
 
+          echo "✓ Mock libpython created"
+
+          echo
           echo "Finding libdl.so..."
 
           LIBDL_PATH="$(
@@ -425,14 +537,22 @@ jobs:
           )"
 
           if [[ -z "$LIBDL_PATH" ]]; then
-            echo "libdl.so not found"
+            echo "❌ Could not find libdl.so"
+
             find "$NDK_SYSROOT" \
               -name "libdl.so" \
               -print | head -50
+
             exit 1
           fi
 
+          echo "libdl:"
+          echo "$LIBDL_PATH"
+
           cp "$LIBDL_PATH" "$MOCK_DIR/libdl.so"
+
+          echo
+          echo "Creating Python sysconfig..."
 
           SYSCONFIG_NAME="_sysconfigdata__linux_${RUST_TARGET}"
 
@@ -463,10 +583,14 @@ jobs:
             -e "s|MOCKDIR_PLACEHOLDER|$MOCK_DIR|g" \
             "$MOCK_DIR/${SYSCONFIG_NAME}.py"
 
+          echo "Sysconfig:"
+          cat "$MOCK_DIR/${SYSCONFIG_NAME}.py"
+
+          echo
+          echo "Downloading pydantic-core source..."
+
           mkdir -p build_src
           cd build_src
-
-          echo "Fetching pydantic-core ${PKG_VER}..."
 
           SOURCE_URL="$(
             curl -fsSL \
@@ -481,22 +605,25 @@ jobs:
           data = json.load(sys.stdin)
 
           urls = [
-              x["url"]
-              for x in data["urls"]
-              if x["packagetype"] == "sdist"
+              item["url"]
+              for item in data["urls"]
+              if item["packagetype"] == "sdist"
           ]
 
           if not urls:
-              raise SystemExit("No source distribution found")
+              raise SystemExit("No sdist found")
 
           print(urls[0])
           '
           )"
 
           if [[ -z "$SOURCE_URL" ]]; then
-            echo "Source URL not found"
+            echo "❌ Could not find source URL"
             exit 1
           fi
+
+          echo "Source URL:"
+          echo "$SOURCE_URL"
 
           curl -fL \
             --retry 5 \
@@ -516,7 +643,7 @@ jobs:
           )"
 
           if [[ -z "$SOURCE_DIR" ]]; then
-            echo "Source directory not found"
+            echo "❌ pydantic_core source directory not found"
             exit 1
           fi
 
@@ -537,7 +664,16 @@ jobs:
           -C link-arg=-Wl,--unresolved-symbols=ignore-all \
           -C link-arg=-Wl,-rpath=/data/data/com.termux/files/usr/lib"
 
-          echo "Building with maturin..."
+          echo
+          echo "PYO3_CROSS_LIB_DIR:"
+          echo "$PYO3_CROSS_LIB_DIR"
+
+          echo
+          echo "PYO3_CROSS_PYTHON_VERSION:"
+          echo "$PYO3_CROSS_PYTHON_VERSION"
+
+          echo
+          echo "Building wheel with Maturin..."
 
           maturin build \
             --release \
@@ -553,24 +689,26 @@ jobs:
           WHEELS=( *.whl )
 
           if [[ ${#WHEELS[@]} -eq 0 ]]; then
-            echo "No wheel generated"
+            echo "❌ No wheel generated"
             exit 1
           fi
 
-          echo "Maturin output:"
+          echo
+          echo "Maturin generated:"
 
           for WHEEL in "${WHEELS[@]}"; do
             echo "  $WHEEL"
           done
 
           echo
-          echo "Normalizing Android wheel filenames..."
+          echo "Normalizing wheel names..."
 
           for OLD in "${WHEELS[@]}"; do
             case "$ARCH" in
               arm64-v8a)
                 NEW="$(echo "$OLD" | sed -E 's/-linux_aarch64\.whl$/.whl/')"
                 ;;
+
               armeabi-v7a)
                 NEW="$(echo "$OLD" | sed -E 's/-linux_armv7l\.whl$/.whl/')"
                 ;;
@@ -595,7 +733,7 @@ jobs:
           done
 
           if [[ ${#FINAL_WHEELS[@]} -eq 0 ]]; then
-            echo "No final wheels found"
+            echo "❌ No final wheels found"
             exit 1
           fi
 
@@ -609,22 +747,36 @@ jobs:
           WHEEL_DIR="${{ steps.build_step.outputs.WHEEL_DIR }}"
 
           shopt -s nullglob
+
           WHEELS=( "$WHEEL_DIR"/*.whl )
 
           if [[ ${#WHEELS[@]} -eq 0 ]]; then
-            echo "No wheels found"
+            echo "❌ No wheels found"
             exit 1
           fi
 
           for WHEEL in "${WHEELS[@]}"; do
             NAME="$(basename "$WHEEL")"
 
-            echo "Checking: $NAME"
+            echo
+            echo "Checking:"
+            echo "$NAME"
 
             if [[ "$NAME" =~ -cp[0-9]+-cp[0-9]+-android_24_(arm64_v8a|armeabi_v7a)\.whl$ ]]; then
-              echo "  ✓ Valid Android wheel name"
+              echo "✓ Valid Android wheel"
             else
-              echo "  ✗ Invalid wheel name"
+              echo "❌ Invalid wheel name:"
+              echo "$NAME"
+              exit 1
+            fi
+
+            if [[ "$NAME" == *"-linux_aarch64.whl" ]]; then
+              echo "❌ linux_aarch64 suffix still exists"
+              exit 1
+            fi
+
+            if [[ "$NAME" == *"-linux_armv7l.whl" ]]; then
+              echo "❌ linux_armv7l suffix still exists"
               exit 1
             fi
           done
@@ -652,31 +804,46 @@ jobs:
       contents: write
 
     steps:
-      - name: Download Wheels
+      - name: Download All Wheels
         uses: actions/download-artifact@v4
         with:
           path: wheels
           merge-multiple: true
 
-      - name: Validate Release Files
+      - name: Validate Release Wheels
         shell: bash
         run: |
           set -euo pipefail
 
           shopt -s nullglob
+
           WHEELS=( wheels/*.whl )
 
-          echo "Release wheels:"
-
-          for WHEEL in "${WHEELS[@]}"; do
-            echo "  $(basename "$WHEEL")"
-            ls -lh "$WHEEL"
-          done
+          echo "========================================="
+          echo "Release Wheels"
+          echo "========================================="
 
           if [[ ${#WHEELS[@]} -eq 0 ]]; then
-            echo "No wheels found"
+            echo "❌ No wheels found"
             exit 1
           fi
+
+          for WHEEL in "${WHEELS[@]}"; do
+            echo
+            echo "$(basename "$WHEEL")"
+            ls -lh "$WHEEL"
+
+            NAME="$(basename "$WHEEL")"
+
+            if [[ ! "$NAME" =~ -cp[0-9]+-cp[0-9]+-android_24_(arm64_v8a|armeabi_v7a)\.whl$ ]]; then
+              echo "❌ Invalid wheel:"
+              echo "$NAME"
+              exit 1
+            fi
+          done
+
+          echo
+          echo "✓ All wheels valid"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -687,22 +854,22 @@ jobs:
           generate_release_notes: true
 
           body: |
-            ### Android / Termux Build
+            ## Android / Termux Build
 
             **Package:** `${{ env.PACKAGE_NAME }}`
 
             **Version:** `${{ needs.check-version.outputs.version }}`
 
-            **Built from commit:** `${{ needs.check-version.outputs.commit_hash }}`
+            **Commit:** `${{ needs.check-version.outputs.commit_hash }}`
 
             ### Architectures
 
             | Architecture | Android ABI |
             |---|---|
-            | `android_24_arm64_v8a` | arm64-v8a |
-            | `android_24_armeabi_v7a` | armeabi-v7a |
+            | ARM64 | `android_24_arm64_v8a` |
+            | ARMv7 | `android_24_armeabi_v7a` |
 
-            ### Python Versions
+            ### Python
 
             - Python 3.9
             - Python 3.10
@@ -711,15 +878,17 @@ jobs:
             - Python 3.13
             - Python 3.14
 
-            ### Build Environment
+            ### Build
 
             - Android NDK r25b
             - Android API 24
             - Rust
             - Maturin
-            - Termux RPATH
+            - Termux-compatible RPATH
 
             ### Installation
+
+            Latest:
 
             ```bash
             curl -sL https://raw.githubusercontent.com/troublescope/android-pydantic-core/main/install_pydantic_core.sh | bash
